@@ -43,16 +43,11 @@ pub async fn run() -> Result<()> {
         }
         return Ok(());
     }
-    // An advisory lock file prevents simultaneous servers and CLI export; OS releases it on exit.
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(dir.join("review.sqlite.lock"))?;
-    fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| {
-        anyhow::anyhow!("This review is already running. Use its browser UI to conclude it.")
-    })?;
+    if cli.command.is_some() && !crate::state_dir::StateDirectory::exists(&dir) {
+        anyhow::bail!("No review exists in this directory. Run review first.");
+    }
+    let lock = crate::lock::ReviewLock::acquire(&dir)?;
+    crate::state_dir::StateDirectory::migrate_legacy(&dir)?;
     let mut store = if cli.command.is_some() {
         Store::existing(&dir)?
     } else {
@@ -67,6 +62,8 @@ pub async fn run() -> Result<()> {
                     "{}",
                     store.review.export_path.as_deref().unwrap_or_default()
                 );
+                store.cleanup()?;
+                drop(lock);
             }
             Action::History => {
                 let mut q = store
@@ -128,6 +125,11 @@ pub async fn run() -> Result<()> {
     }
     if let Some(agent) = app.agent.lock().await.take() {
         agent.stop().await;
+    }
+    let mut store = app.store.lock().await;
+    if store.review.status == ReviewStatus::Completed {
+        store.cleanup()?;
+        drop(lock);
     }
     Ok(())
 }

@@ -124,6 +124,26 @@ fn render_code(m: &Meta, content: &str, workspace: &Workspace, block: usize) -> 
         if actual != content.trim_end_matches('\n') {
             return None;
         }
+        // An agent may quote current source instead of a diff. For modified files,
+        // prefer the actual captured hunks touching that excerpt, including deletions.
+        if source.old.is_some() {
+            let end = m
+                .start
+                .checked_add(content.lines().count() as u32)?
+                .checked_sub(1)?;
+            if let Some(patch) = overlapping_hunks(&workspace.diff, &m.file, m.start, end) {
+                return render_code(
+                    &Meta {
+                        file: m.file.clone(),
+                        start: 0,
+                        diff: true,
+                    },
+                    &patch,
+                    workspace,
+                    block,
+                );
+            }
+        }
     }
     for (i, line) in content.lines().enumerate() {
         if m.diff && line.starts_with("@@ ") {
@@ -170,7 +190,16 @@ fn render_code(m: &Meta, content: &str, workspace: &Workspace, block: usize) -> 
         } else {
             let n = new;
             new += 1;
-            (None, Some(n), line, "context")
+            (
+                None,
+                Some(n),
+                line,
+                if source.old.is_none() {
+                    "added"
+                } else {
+                    "context"
+                },
+            )
         };
         for (number, src) in [(o, &source.old), (n, &source.new)] {
             if let Some(number) = number
@@ -197,16 +226,60 @@ fn render_code(m: &Meta, content: &str, workspace: &Workspace, block: usize) -> 
     if first == 0 {
         return None;
     }
-    let ranges = [("old", old_range), ("new", new_range)]
-        .into_iter()
-        .filter_map(|(side, range)| range.map(|(start, end)| format!("{side} {start}–{end}")))
-        .collect::<Vec<_>>()
-        .join(" · ");
+    let ranges = [
+        ("old", old_range),
+        (if m.diff { "new" } else { "lines" }, new_range),
+    ]
+    .into_iter()
+    .filter_map(|(side, range)| range.map(|(start, end)| format!("{side} {start}–{end}")))
+    .collect::<Vec<_>>()
+    .join(" · ");
+    let kind = if m.diff {
+        "diff"
+    } else if source.old.is_none() {
+        "new file"
+    } else {
+        "current code"
+    };
+    let (side, (start, end)) = new_range
+        .map(|range| ("new", range))
+        .or_else(|| old_range.map(|range| ("old", range)))?;
     Some(format!(
-        "<section class=\"code-block\"><header><span>{} <small>{ranges}</small></span><button data-copy=\"{}:{first}\" title=\"Copy source reference\">Copy reference</button></header><div class=\"code-rows\">{rows}</div></section>",
-        escape(&m.file),
-        escape(&m.file)
+        "<section class=\"code-block\"><header><span class=\"code-reference\" data-file=\"{file}\" data-start=\"{start}\" data-end=\"{end}\" data-side=\"{side}\">{file} <small>{kind} · {ranges}</small></span><button data-copy=\"{file}:{first}\" title=\"Copy source reference\">Copy reference</button></header><div class=\"code-rows\">{rows}</div></section>",
+        file = escape(&m.file),
     ))
+}
+
+/// Keep complete VCS hunks so replacements and deletions retain their true sides.
+fn overlapping_hunks(diff: &str, file: &str, start: u32, end: u32) -> Option<String> {
+    let header = format!("diff --git a/{file} b/{file}");
+    let mut in_file = false;
+    let mut include = false;
+    let mut selected = String::new();
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") {
+            in_file = line == header;
+            include = false;
+        } else if in_file && line.starts_with("@@ ") {
+            let range = line.split_whitespace().nth(2)?.strip_prefix('+')?;
+            let (line_start, count) = range.split_once(',').unwrap_or((range, "1"));
+            let line_start: u32 = line_start.parse().ok()?;
+            let count: u32 = count.parse().ok()?;
+            let line_end = line_start.saturating_add(count.saturating_sub(1));
+            include = line_start <= end && line_end >= start;
+            if include {
+                selected.push_str(line);
+                selected.push('\n');
+            }
+        } else if in_file
+            && include
+            && matches!(line.as_bytes().first(), Some(b'+' | b'-' | b' ' | b'\\'))
+        {
+            selected.push_str(line);
+            selected.push('\n');
+        }
+    }
+    (!selected.is_empty()).then_some(selected)
 }
 
 #[cfg(test)]
@@ -233,6 +306,36 @@ mod tests {
         assert!(h.contains("data-side=\"old\""));
         assert!(h.contains("data-line=\"2\""));
         assert!(!render(&guide.replace("+new", "+fake"), &w).1.is_empty());
+    }
+
+    #[test]
+    fn current_excerpt_of_modified_file_uses_the_captured_diff() {
+        let mut w = workspace();
+        w.diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n".into();
+        let guide = "```rust {\"file\":\"a.rs\",\"start\":1}\nnew\nsame\n```";
+        let (html, warnings) = render(guide, &w);
+        assert!(warnings.is_empty());
+        assert!(html.contains("code-line removed"));
+        assert!(html.contains("code-line added"));
+        assert!(html.contains("code-line context"));
+        assert!(html.contains("diff · old 1–2 · new 1–2"));
+        assert!(!html.contains("new file"));
+        assert!(html.contains("data-start=\"1\" data-end=\"2\" data-side=\"new\""));
+        assert!(
+            !render(&guide.replace("new\nsame", "fake\nsame"), &w)
+                .1
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn excerpt_hunks_are_scoped_to_file_and_range_including_deletions() {
+        let diff = "diff --git a/other.rs b/other.rs\n@@ -1 +1 @@\n-x\n+y\ndiff --git a/a.rs b/a.rs\n@@ -1,2 +1,1 @@\n-remove\n keep\n@@ -20 +19 @@\n-before\n+after\n";
+        let selected = overlapping_hunks(diff, "a.rs", 1, 1).unwrap();
+        assert!(selected.contains("-remove"));
+        assert!(!selected.contains("-x"));
+        assert!(!selected.contains("-before"));
+        assert!(overlapping_hunks(diff, "a.rs", 8, 10).is_none());
     }
     #[test]
     fn definition_lists_render_and_remain_selectable() {

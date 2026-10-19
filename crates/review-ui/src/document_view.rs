@@ -23,7 +23,7 @@ pub(crate) fn DocumentView(cx: Context) -> impl IntoView {
     let retry = move |_| cx.send(Command::Generate);
     let toggle_changes = move |event| save_detail(cx, "all-changes", event);
     view! {
-        <main id="reading" on:scroll=reading_scroll>
+        <main id="reading" class:has-title=move || guide.get().contains("<h1>") on:scroll=reading_scroll>
             <div class="document-heading">
                 <p class="muted directory">{move || cx.review.get().map(|r| r.directory).unwrap_or_default()}</p>
                 <div class="document-meta">{move || cx.review.get().map(|r| format!("{} · {} changed files · {}", r.workspace.vcs, r.workspace.files.len(), r.status)).unwrap_or_default()}</div>

@@ -121,7 +121,7 @@ async fn run_turn(app: &Shared, prompt: Option<String>) -> Result<()> {
 
 async fn agent_event(app: &Shared, id: &str, event: Value) -> Result<()> {
     let mut s = app.store.lock().await;
-    if s.review.id != id {
+    if s.review.id != id || s.review.status == ReviewStatus::Completed {
         return Ok(());
     }
     let method = event["method"].as_str().unwrap_or("");

@@ -4,6 +4,7 @@
 /.playwright-mcp/
 /test-results/
 review.sqlite*
+.review/
 review-feedback-*.md
 
 __pycache__/

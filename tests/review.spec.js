@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -77,8 +77,15 @@ test('selection, chat, recorded feedback, drafts, server restart and direct expo
     await expect.poll(() => server.child.exitCode).toBe(0);
     await expect(page.locator('.connection')).toHaveText('Submitted');
     await expect(page.getByRole('button', {name:'Submit review'})).toBeDisabled();
+    expect(readdirSync(dir).filter(name => name.startsWith('review.sqlite') || name.startsWith('.review'))).toEqual([]);
+    expect(output.indexOf('Overall: looks promising.')).toBeLessThan(output.indexOf('calculator.rs:2-2'));
+    expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('review-outbox-')))).toEqual([]);
     server = await start(dir, port);
-    await page.reload();await expect(page.getByRole('button', {name:'Submit review'})).toBeDisabled();
+    await ready(page,server.url);
+    await expect(page.getByRole('button', {name:'Submit review'})).toBeEnabled();
+    await expect(page.getByRole('button', {name:'Feedback (0)',exact:true})).toBeVisible();
+    await expect(page.locator('.message')).toHaveCount(0);
+    expect(readFileSync(join(dir, filename),'utf8')).toBe(output);
   } finally { await stop(server); }
 });
 
@@ -154,6 +161,11 @@ test('left panel, persistent prose highlight, implicit general feedback and one-
     const panel=await page.locator('aside').boundingBox();
     const guide=await page.locator('main').boundingBox();
     expect(panel.x + panel.width).toBeLessThanOrEqual(guide.x);
+    const title=await page.locator('#guide h1').first().boundingBox();
+    const metadata=await page.locator('.document-heading').boundingBox();
+    const firstParagraph=await page.locator('#guide .prose p').first().boundingBox();
+    expect(title.y + title.height).toBeLessThanOrEqual(metadata.y);
+    expect(metadata.y + metadata.height).toBeLessThanOrEqual(firstParagraph.y);
 
     const quote=await selectProse(page);
     await page.getByRole('textbox',{name:'Ask Codex',exact:true}).fill('Question about this passage');
@@ -179,6 +191,8 @@ test('left panel, persistent prose highlight, implicit general feedback and one-
     await page.getByRole('button',{name:'Submit review'}).click();
     await expect(page.locator('.completion')).toBeVisible();
     await expect.poll(()=>server.child.exitCode).toBe(0);
+    const exported=readFileSync(join(dir,readdirSync(dir).find(name=>name.startsWith('review-feedback-'))),'utf8');
+    expect(exported).toBe('# Overall feedback\n\nGeneral comment one\n\nGeneral comment two\n\n');
   } finally { await stop(server); }
 });
 
@@ -193,6 +207,9 @@ test('CLI conclusion exports the saved review even after workspace edits', async
     writeFileSync(join(dir,'calculator.rs'),'// changes after reviewing\n');
     const path=execFileSync(binary,['--path',dir,'conclude'],{encoding:'utf8'}).trim();
     expect(readFileSync(path,'utf8')).toContain('Preserve this reviewed snapshot');
+    expect(readdirSync(dir).filter(name=>name.startsWith('review.sqlite') || name.startsWith('.review'))).toEqual([]);
+    expect(()=>execFileSync(binary,['--path',dir,'history'],{stdio:'pipe'})).toThrow();
+    expect(readdirSync(dir).filter(name=>name.startsWith('review.sqlite') || name.startsWith('.review'))).toEqual([]);
   } finally { await stop(server); }
 });
 
@@ -211,6 +228,8 @@ test('failed export leaves the review usable and does not overwrite a handover',
     await expect(page.getByRole('alert')).toContainText('already exists with different content');
     await expect(page.locator('.completion')).toHaveCount(0);
     expect(server.child.exitCode).toBeNull();
+    expect(readdirSync(join(dir,'.review'))).toContain('review.sqlite');
+    expect(readdirSync(join(dir,'.review'))).toContain('lock');
     expect(readFileSync(path,'utf8')).toBe('An existing handover');
     await page.getByRole('button',{name:'Feedback (0)',exact:true}).click();
     await page.getByRole('textbox',{name:'Feedback comment'}).fill('Still editable after failed export');
@@ -381,5 +400,63 @@ test('diff range selection retains old or new side through context lines', async
     await expect(page.locator('.reference')).toContainText('calculator.rs:2-3 (new)');
     await expect(page.locator('.code-line[data-selected=true]')).toHaveCount(2);
     await expect(page.locator('.code-line.removed')).toHaveAttribute('data-selected','false');
+  } finally {await stop(server);}
+});
+
+test('current-code excerpts render actual changes and block titles record source feedback', async ({page}) => {
+  const dir=fixture();
+  writeFileSync(join(dir,'calculator.rs'),'pub fn add(a: i32, b: i32) -> i32 {\n    a - b\n}\n');
+  execFileSync('git',['-C',dir,'add','.']);
+  execFileSync('git',['-C',dir,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','base']);
+  writeFileSync(join(dir,'calculator.rs'),'pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n');
+  const server=await start(dir,0,'command');
+  try {
+    await page.goto(server.url);
+    await page.getByRole('button',{name:'Approve once',exact:true}).click();
+    await expect(page.locator('.code-line.removed')).toContainText('a - b');
+    await expect(page.locator('.code-line.added')).toContainText('a + b');
+    await expect(page.locator('.code-line.context')).toHaveCount(2);
+    await page.locator('.code-reference').click({clickCount:3});
+    await expect(page.locator('.reference')).toContainText('calculator.rs:1-3 (new)');
+    await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+    await page.getByRole('textbox',{name:'Feedback comment'}).fill('Feedback on this block');
+    await page.getByRole('button',{name:'Record feedback',exact:true}).click();
+    await expect(page.locator('.feedback-card')).toContainText('calculator.rs:1-3 (new)');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await page.getByRole('button',{name:'Submit review',exact:true}).click();
+    await expect.poll(()=>server.child.exitCode).toBe(0);
+    expect(readdirSync(dir).filter(name=>name.startsWith('.review') || name.startsWith('review.sqlite'))).toEqual([]);
+  } finally {await stop(server);}
+});
+
+test('legacy SQLite state migrates with WAL, drafts and feedback, then cleans the entire folder', async ({page}) => {
+  const dir=fixture(); let server=await start(dir);
+  try {
+    await ready(page,server.url);
+    await page.getByRole('button',{name:'Feedback (0)',exact:true}).click();
+    await page.getByRole('textbox',{name:'Feedback comment'}).fill('Keep this feedback');
+    await page.getByRole('button',{name:'Record feedback',exact:true}).click();
+    await expect(page.locator('.feedback-card')).toContainText('Keep this feedback');
+    await page.getByRole('textbox',{name:'Feedback comment'}).fill('Unfinished draft');
+    await saved(page); const port=server.port; await stop(server);
+    // Recreate the old on-disk layout, retaining the uncheckpointed WAL after SIGKILL.
+    for(const name of readdirSync(join(dir,'.review')).filter(name=>name.startsWith('review.sqlite'))) {
+      renameSync(join(dir,'.review',name),join(dir,name));
+    }
+    renameSync(join(dir,'.review','lock'),join(dir,'review.sqlite.lock'));
+    rmSync(join(dir,'.review'),{recursive:true});
+    server=await start(dir,port); await ready(page,server.url);
+    await expect(page.locator('.feedback-card')).toContainText('Keep this feedback');
+    await expect(page.getByRole('textbox',{name:'Feedback comment'})).toHaveValue('Unfinished draft');
+    expect(readdirSync(dir).filter(name=>name.startsWith('review.sqlite'))).toEqual([]);
+    expect(readdirSync(join(dir,'.review'))).toContain('review.sqlite');
+    mkdirSync(join(dir,'.review','diagrams'));
+    writeFileSync(join(dir,'.review','diagrams','temporary.svg'),'<svg/>');
+    await page.getByRole('button',{name:'Submit review',exact:true}).click();
+    await expect.poll(()=>server.child.exitCode).toBe(0);
+    expect(readdirSync(dir).filter(name=>name.startsWith('.review'))).toEqual([]);
+    const output=readFileSync(join(dir,readdirSync(dir).find(name=>name.startsWith('review-feedback-'))),'utf8');
+    expect(output).toContain('Keep this feedback');
+    expect(output).not.toContain('Unfinished draft');
   } finally {await stop(server);}
 });

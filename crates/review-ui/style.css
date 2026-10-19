@@ -137,6 +137,9 @@ h3 {
 .code-block header button {
   font:11px system-ui;
   padding:4px 8px}
+.code-reference {
+  cursor:pointer;
+  user-select:none}
 .code-rows {
   overflow:auto;
   padding:8px 0}
@@ -448,6 +451,20 @@ body:has(.completion) .workspace {
 .guide-loading {
   padding:12px 0;
   color:var(--muted)}
+
+/* Keep the guide's selectable DOM intact while placing its title above metadata. */
+#reading.has-title {
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  grid-auto-rows:max-content;
+  align-content:start}
+#reading.has-title #guide,
+#reading.has-title #guide > .prose:first-child {
+  display:contents}
+#reading.has-title #guide > .prose:first-child > h1:first-of-type {
+  grid-row:1}
+#reading.has-title .document-heading {
+  grid-row:2}
 
 .preparation-clock {
   font-variant-numeric:tabular-nums}

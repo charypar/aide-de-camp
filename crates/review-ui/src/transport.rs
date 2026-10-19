@@ -50,6 +50,14 @@ pub(crate) fn connect(cx: Context) {
                         cx.ui.set(pending_ui.unwrap_or_else(|| review.ui.clone()));
                     }
                     cx.review.set(Some(*review));
+                    if cx
+                        .review
+                        .get_untracked()
+                        .is_some_and(|r| r.status == ReviewStatus::Completed)
+                    {
+                        cx.pending.with_value(|p| p.borrow_mut().clear());
+                        cx.store_pending();
+                    }
                     cx.connected.set(true);
                     if is_first {
                         cx.socket.with_value(|s| {

@@ -17,7 +17,9 @@ fn run(dir: &Path, program: &str, args: &[&str]) -> Result<Vec<u8>> {
 }
 fn ignored(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
-    name.starts_with("review.sqlite")
+    path.split('/')
+        .any(|part| part == ".review" || part.starts_with(".review-cleanup-"))
+        || name.starts_with("review.sqlite")
         || (name.starts_with("review-feedback-") && name.ends_with(".md"))
 }
 fn text(bytes: Vec<u8>) -> Option<String> {
@@ -236,6 +238,8 @@ mod ignore_tests {
         std::fs::write(path.join("important.log"), "included").unwrap();
         std::fs::write(path.join("nested/secret.txt"), "ignored").unwrap();
         std::fs::write(path.join("nested/visible.txt"), "included").unwrap();
+        std::fs::create_dir_all(path.join("nested/.review/diagrams")).unwrap();
+        std::fs::write(path.join("nested/.review/diagrams/test.svg"), "internal").unwrap();
     }
 
     #[test]
@@ -263,6 +267,13 @@ mod ignore_tests {
             assert!(!paths.contains(&"nested/secret.txt"));
             assert!(paths.contains(&"important.log"));
             assert!(paths.contains(&"nested/visible.txt"));
+            assert!(!paths.iter().any(|path| path.contains(".review/")));
+            std::fs::write(
+                path.join("nested/.review/diagrams/test.svg"),
+                "updated internal data",
+            )
+            .unwrap();
+            assert_eq!(workspace.fingerprint, capture(path).unwrap().fingerprint);
         }
     }
     #[test]

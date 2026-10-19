@@ -187,8 +187,31 @@ impl SelectionController {
         }
     }
 
+    fn block_reference(event: &web_sys::MouseEvent) -> Option<Reference> {
+        let target = event.target()?.dyn_into::<Element>().ok()?;
+        let header = target.closest(".code-reference").ok()??;
+        Some(Reference::Code {
+            file: header.get_attribute("data-file")?,
+            start: header.get_attribute("data-start")?.parse().ok()?,
+            end: header.get_attribute("data-end")?.parse().ok()?,
+            side: header.get_attribute("data-side")?.parse().ok()?,
+        })
+    }
+
     pub fn pointer_down(self, event: web_sys::MouseEvent) {
         if event.button() != 0 {
+            return;
+        }
+        if let Some(reference) = Self::block_reference(&event) {
+            event.prevent_default();
+            if let Ok(Some(selection)) = window().get_selection() {
+                let _ = selection.remove_all_ranges();
+            }
+            self.cx.change(|ui| {
+                ui.selection = Some(reference);
+                ui.prose_offset = None;
+                ui.code_anchor = None;
+            });
             return;
         }
         let preferred = if event.shift_key() {
@@ -262,6 +285,9 @@ impl SelectionController {
             }
             return;
         }
+        if target.closest(".code-reference").ok().flatten().is_some() {
+            return;
+        }
 
         let Some(selection) = window().get_selection().ok().flatten() else {
             return;
@@ -282,6 +308,15 @@ impl SelectionController {
             return;
         }
         if !root.contains(range.common_ancestor_container().ok().as_ref()) {
+            return;
+        }
+        let reference = Reference::Prose {
+            quote: quote.clone(),
+        };
+        if self.cx.review.get_untracked().is_none_or(|review| {
+            validate_reference(&reference, &review.workspace, &review.guide).is_err()
+        }) {
+            self.clear();
             return;
         }
 

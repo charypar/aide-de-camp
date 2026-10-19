@@ -1,3 +1,4 @@
+use crate::state_dir::StateDirectory;
 use anyhow::{Result, bail};
 use review_core::*;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -39,14 +40,15 @@ impl Store {
     }
 
     pub fn existing(directory: &Path) -> Result<Self> {
-        if !directory.join("review.sqlite").exists() {
+        if !StateDirectory::database(directory).exists() {
             bail!("No review exists in this directory. Run review first.");
         }
         Self::load(directory, None)
     }
 
     fn load(directory: &Path, workspace: Option<Workspace>) -> Result<Self> {
-        let db = Connection::open(directory.join("review.sqlite"))?;
+        StateDirectory::ensure(directory)?;
+        let db = Connection::open(StateDirectory::database(directory))?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY, state TEXT NOT NULL, active INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, review_id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY, review_id TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL);")?;
         let existing: Option<String> = db
@@ -73,7 +75,10 @@ impl Store {
             review = Self::fresh(
                 directory,
                 workspace,
-                Some("Workspace changed. Previous review is archived in review.sqlite.".into()),
+                Some(
+                    "Workspace changed. Previous review is archived in .review/review.sqlite."
+                        .into(),
+                ),
             );
         }
         if review.busy {
@@ -87,6 +92,11 @@ impl Store {
                     m.status = MessageStatus::Interrupted;
                 }
             }
+        }
+        // HTML is a derived view. Re-render saved Markdown when presentation rules change.
+        if !review.guide.is_empty() {
+            (review.guide_html, review.guide_warnings) =
+                document::render(&review.guide, &review.workspace);
         }
         let mut s = Self { db, review };
         s.save("open", None)?;
@@ -155,7 +165,7 @@ impl Store {
             .join(format!("review-feedback-{}.md", self.review.id));
         let content = export_markdown(&self.review);
         // Publish a fully synced file atomically without replacing an existing handover.
-        let temporary = Path::new(&self.review.directory).join("review.sqlite.export.tmp");
+        let temporary = StateDirectory::path(Path::new(&self.review.directory)).join("export.tmp");
         let mut f = std::fs::File::create(&temporary)?;
         f.write_all(content.as_bytes())?;
         f.sync_all()?;
@@ -174,9 +184,30 @@ impl Store {
             }
             Err(e) => return Err(e.into()),
         }
+        #[cfg(unix)]
+        std::fs::File::open(&self.review.directory)?.sync_all()?;
         self.review.status = ReviewStatus::Completed;
         self.review.export_path = Some(path.to_string_lossy().into());
         Ok(())
+    }
+
+    pub fn cleanup(&mut self) -> Result<()> {
+        if self.review.status != ReviewStatus::Completed
+            || !self
+                .review
+                .export_path
+                .as_ref()
+                .is_some_and(|path| Path::new(path).is_file())
+        {
+            bail!("Cannot remove review state before feedback has been exported");
+        }
+        // Close SQLite before unlinking its files, even while server tasks still hold App references.
+        let db = std::mem::replace(&mut self.db, Connection::open_in_memory()?);
+        if let Err((db, error)) = db.close() {
+            self.db = db;
+            return Err(error.into());
+        }
+        StateDirectory::remove(Path::new(&self.review.directory))
     }
 }
 #[cfg(test)]
@@ -253,6 +284,40 @@ mod tests {
                 .seen("retry")
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn cleanup_requires_an_export_and_preserves_unrelated_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::open(temp.path(), w("cleanup")).unwrap();
+        assert!(store.cleanup().is_err());
+        assert!(StateDirectory::database(temp.path()).is_file());
+
+        let unrelated = temp.path().join("review.sqlite.backup");
+        std::fs::write(&unrelated, "keep").unwrap();
+        std::fs::create_dir(StateDirectory::path(temp.path()).join("diagrams")).unwrap();
+        std::fs::write(
+            StateDirectory::path(temp.path()).join("diagrams/sketch.svg"),
+            "temporary",
+        )
+        .unwrap();
+        store.conclude().unwrap();
+        store.save("complete", None).unwrap();
+        let export = store.review.export_path.clone().unwrap();
+        store.cleanup().unwrap();
+        assert!(Path::new(&export).is_file());
+        assert_eq!(std::fs::read_to_string(unrelated).unwrap(), "keep");
+        assert!(!StateDirectory::path(temp.path()).exists());
+    }
+
+    #[test]
+    fn missing_export_prevents_cleanup_of_completed_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::open(temp.path(), w("missing")).unwrap();
+        store.conclude().unwrap();
+        std::fs::remove_file(store.review.export_path.as_ref().unwrap()).unwrap();
+        assert!(store.cleanup().is_err());
+        assert!(StateDirectory::database(temp.path()).is_file());
     }
 
     #[test]

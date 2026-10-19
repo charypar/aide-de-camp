@@ -43,6 +43,12 @@ impl Context {
         if let Some(r) = self.review.get_untracked()
             && let Ok(Some(storage)) = window().local_storage()
         {
+            if r.status == ReviewStatus::Completed
+                || self.pending.with_value(|p| p.borrow().is_empty())
+            {
+                let _ = storage.remove_item(&format!("review-outbox-{}", r.id));
+                return;
+            }
             let _ = storage.set_item(
                 &format!("review-outbox-{}", r.id),
                 &self
