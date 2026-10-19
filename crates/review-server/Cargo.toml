@@ -1,0 +1,29 @@
+[package]
+name = "review-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "review"
+path = "src/main.rs"
+
+[dependencies]
+review-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
+rusqlite = { version = "0.37", features = ["bundled"] }
+clap = { version = "4", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+rust-embed = { version = "8", features = ["debug-embed", "interpolate-folder-path"] }
+mime_guess = "2"
+webbrowser = "1"
+fs2 = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

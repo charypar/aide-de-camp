@@ -1,0 +1,4 @@
+[build]
+dist = "../../dist"
+[watch]
+watch = ["src", "style.css", "index.html", "../review-core/src"]

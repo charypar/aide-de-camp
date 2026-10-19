@@ -1,0 +1,9 @@
+/target/
+/dist/
+/node_modules/
+/.playwright-mcp/
+/test-results/
+review.sqlite*
+review-feedback-*.md
+
+__pycache__/

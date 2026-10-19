@@ -1,6 +1,6 @@
 # Guided review — product plan
 
-Product outline with an agreed first milestone, acceptance criteria, CLI/browser direction, and build sequence subject to a Codex feasibility check. Milestone 2 is open for reconsideration after using milestone 1. Technical integration choices remain open. Works independently of the companion [coordination workbench](COORDINATION_PLAN.md).
+Product plan and implementation handover for the first working milestone. Rust/Axum, Leptos CSR, SQLite, WebSocket application communication, and native Codex app-server integration are implemented. Milestone 2 remains open for reconsideration after using milestone 1. The implementation progress section records current decisions and verification; protocol comparisons below retain the planning research. Works independently of the companion [coordination workbench](COORDINATION_PLAN.md).
 
 **Repository:** this tool belongs to the DevDeck Cargo monorepo alongside the coordination workbench described in `COORDINATION_PLAN.md`. Both tools live in one Cargo workspace and remain independently usable. Exact crate boundaries are an implementation detail; agent integration and other common code can be shared where useful.
 
@@ -101,7 +101,7 @@ These are delivery slices within milestone 1, not additional product milestones.
 
 The user considered ACP, then clarified the primary goal: talk to a full-featured Codex session through the review web UI, retaining registered MCP access. Direct app-server integration is now preferred. Zed's ACP support is irrelevant to this integration; Zed remains a code/diff viewer.
 
-Documentation and source inspection support feasibility, but no live integration test has yet run:
+Initial documentation/source findings (subsequently confirmed by live tests; see implementation progress):
 
 - Local installation: `codex-cli 0.163.0` exposes `app-server` and noninteractive `exec` with JSON events and session resumption.
 - The [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp/blob/main/README.md) translates ACP requests into Codex app-server operations. It documents contextual prompts, streaming tool activity, authentication, and sandbox configuration.
@@ -211,10 +211,71 @@ Testing tooling verified 2026-10-18: Microsoft's [Playwright MCP](https://github
 
 Prefer headless browser testing to avoid opening windows during development. Playwright MCP was reconfigured with `--headless` and verified on 2026-10-18: `about:blank` loaded successfully and the browser reported `HeadlessChrome` in its user agent.
 
-Before committing the technical design:
-1. Complete the direct Codex app-server feasibility experiment, including existing MCP access and interactive session controls, before committing the detailed integration design.
-2. Clarify minimal reset semantics for changed code without designing revision support. The current direction is to reset the review.
+The integration feasibility check and minimal reset semantics are now settled; see implementation progress below. Further iteration should be driven by using milestone 1.
 
 During implementation outline and technical design: bundled walkthrough skill instructions; Markdown fence annotations for language, diff status, source-file/line mapping, and validation of agent-supplied code/diffs (HTML rendering and interactions owned by the tool); overall-feedback placement and editing controls; extraction of Git uncommitted changes / jj working-commit changes; stable file/line references; guide-to-Zed navigation and reference capture; harness/session integration; full-state persistence; reset mechanics; conclusion command and output filename. Human interaction is required; whether the review tool needs its own MCP interface remains open. Revision support is deferred pending experience with milestone 1.
 
 Planning path: product outline → milestones → implementation outline → technical design and executable plan. Product and stack decisions are agreed; routine implementation decisions are delegated as described above. Proposed success signals: faster understanding and judgement, easy return after interruption, and actionable feedback requiring little manual repackaging.
+
+## Implementation progress — 2026-10-18
+
+Implementation is underway in three Cargo crates: `review-core` (shared state, references, verified Markdown rendering), `review-server` (the `review` CLI, Axum server, SQLite store, native harness adapter), and `review-ui` (Leptos CSR). The walkthrough skill lives in `skills/review-walkthrough/SKILL.md`. Root `justfile` recipes cover setup, development, build, installation, checks, and automated/live/browser tests.
+
+Settled lifecycle defaults: one active review per starting directory; changed code archives previous state in the same SQLite database and opens a fresh review; changes are detected only when the command starts, with automatic guide preparation. Completed reviews reopen as completed. There is no in-page restart; `review history` lists retained reviews. `review conclude` is supported while the server is stopped. Submission writes `review-feedback-<review-id>.md` without overwriting different existing content. Application state, lock/temporary files, and exported handovers are excluded from input/change detection. Git input combines the current working tree and index against HEAD, including untracked files; jj uses `@`. Launching in a subdirectory still reviews the complete repository.
+
+Snippet syntax: a fenced language followed by JSON metadata, e.g. `rust {"file":"src/main.rs","start":12}` or `rust {"file":"src/main.rs","diff":true}` with unified-diff hunk headers in the body. The tool verifies source text and old/new line mappings against the captured workspace; invalid mappings remain visible with a warning and have no interactive source anchors. Any reviewed file range can also be referenced explicitly from the conversation controls.
+
+Native Codex feasibility is verified against installed version 0.163.0: guide generation with valid source annotations, code/prose follow-ups, discovery of existing configured MCPs, an approved read-only Playwright tool call, and conversation resumption after app-server restart. Some pre-existing MCP registrations report authentication errors (Sentry and rayon-admin-api); the successful Playwright check establishes native configuration reuse without assuming all registered servers are currently authenticated. The actual server/browser flow has also generated and discussed a guide using Codex on a sample Git change.
+
+Verification: 11 automated Rust tests pass (including Git/jj extraction, persisted state, export, source validation, and native event handling); the separate opt-in live Codex test passes; five headless browser acceptance tests pass. Browser coverage includes code/prose references, manual ranges, chat, feedback editing, drafts, direct export, server kill/restart, changed-code archival, approval/question/form controls, interrupted partial responses, duplicate-command protection, and reading-position restoration. Formatting and Clippy checks pass for both server and WASM UI. `just install` builds and installs the CLI, and the installed binary successfully served its embedded UI from outside the checkout. A real Codex-backed browser review generated a narrated guide, answered a selected-code follow-up, recorded feedback, and exported Markdown. Milestone 1 is ready for user testing and refinement; milestone 2 remains open.
+
+Operational details: the server remembers its port in SQLite so browser tabs can reconnect after restart; `--port 0` explicitly chooses another. Local WebSockets require a matching loopback origin. A separate advisory lock prevents concurrent servers/exporters for one review. Agent protocol translation lives in `agent.rs`, exposing normalized review events while retaining native request payloads. Startup failures and interrupted work remain visible and recoverable; uncertain browser commands retain stable IDs in a local outbox.
+
+The development workflow was also smoke-tested: `just dev <repository>` starts the server and Trunk watcher, prints the local URL, and shuts down with Ctrl-C.
+
+
+## First review feedback — 2026-10-19
+
+The first real review cycle completed successfully. Feedback from `review-feedback-ff635916-1c04-45ff-8a66-aafc0e0f5727.md` settles these refinements:
+
+- Crate package names match their directories: `review-core`, `review-server`, and `review-ui`; the executable remains `review`.
+- Capture changes only when starting the review command. Keep the running page on its captured snapshot, with no polling or per-action recapture. Changed code at the next launch archives the previous review and automatically prepares a new one. CLI conclusion exports the saved snapshot without starting a fresh review.
+- Each page is a single review. Remove New review and Prepare/regenerate controls; preparation starts automatically, with a retry only when no guide is available after interruption or failure. Submission saves the Markdown handover, shows a prominent completion message, prints the path, and exits the command.
+- Put conversation/feedback on the left and the guide on the right. Use a technical, sans-serif presentation with a Catppuccin-inspired light palette. Keep code and prose references visibly highlighted while typing and after restoration; place the active reference beside the relevant input.
+- Guide preparation belongs in a loading/skeleton state in the document, not the chat history. Native requests remain available during preparation. The conversation retains the native session context for follow-up questions.
+- Overall feedback is implicit when no reference is selected. Multiple overall comments remain supported.
+- The bundled skill must walk through the mechanics and majority of significant changes, especially addition-heavy diffs. Prefer code identifiers and ordinary language; explain necessary new terms using rendered Markdown definition lists.
+- `AGENTS.md` now prefers cohesive types/impl blocks and blank lines between logical steps. Milestone 2 remains open.
+
+Verification for these refinements: 14 Rust tests pass; formatting and Clippy pass for server and WASM. Eight browser regression tests cover the revised layout, persistent highlights across input focus/reload, multiple implicit general comments, startup-only reset, export followed by process exit, CLI export after code edits, and a conflicting export file without data loss. Headless Playwright MCP also exercised code/prose selection, chat, feedback recording, and completion. The skill validator passes. A live Codex run on two newly added Rust files produced 19 source excerpts with no mapping warnings, covering data structures, transactional persistence, reference validation, export, and tests. Preparation showed the loading state with zero chat messages. A selected-code follow-up used the same native session; feedback submission then exported and exited successfully. The installed `review` command has been updated.
+
+
+## Preparation approval visibility — 2026-10-19
+
+Reproduced command and MCP approval buttons falling outside the visible panel during initial preparation at a 600px viewport height. Pending requests now occupy a separate, sticky, scrollable region at the top of the side panel, independent of conversation/feedback tabs and the activity log. The preparation state explicitly reports waiting for a response. Ten browser tests pass, including native-protocol test peers that pause initial generation until approval, decline/retry, and request restoration after a browser reload. These peers exercise the real stdio transport and response path without calling a model or automatically approving a user's tools. Formatting and Clippy pass. Headless Playwright MCP also verified visible approval at 1280×600, reload, approval delivery, guide completion, and submission. The installed CLI includes the fix. The user's current saved review had no pending native request when inspected; the visibility failure was reproduced independently.
+
+Follow-up diagnosis: the reported message was seen in Codex activity. The saved native events contained MCP reauthentication failures for `sentry` and `rayon-admin-api`, no approval requests, and successful guide completion. Reauthentication is distinct from approving a tool call; the harness reports `codex mcp login <server>` as its recovery action. Other startup failures included missing GitHub environment credentials and a Rayon OAuth metadata mismatch. No credentials or native configuration were changed.
+
+
+## Second review feedback — 2026-10-19
+
+Refinements from `review-feedback-e9225da2-7d67-4bb2-a20f-898cc25e8cef.md`:
+
+- Use the guide's AI-generated title as the document title; remove the generic “Understand the change” block while retaining repository path and VCS statistics. The bundled skill asks for a concrete summary title.
+- Open the browser once the guide is ready. Open earlier only for native requests or preparation failures requiring interaction; print the URL immediately. Resuming a prepared review opens immediately.
+- Persist paragraph selections using DOM ranges rather than assuming their anchor is a text node. Support explicit code-row dragging and Shift-click ranges, including reverse selection and restored anchors. Keep highlighting reactive to selection changes.
+- Show the captured prose or code in sent chat messages as well as passing it to the harness. Enter sends chat/records feedback; Shift+Enter adds a newline. Ignore Enter during IME composition and prevent held Enter from repeating submission.
+- Replace domain strings with `ReviewStatus`, `MessageRole`, `MessageStatus`, and `DiffSide`. Standard JSON names stay unchanged; accept legacy message `completed` and empty manual diff-side values on load. Unknown native turn statuses become explicit failures at the adapter boundary.
+- Keep lib/main entry points small. Split shared models/reference/protocol/export, server launch/transport/commands/session, and UI document/chat/feedback/selection/requests into focused modules. Use named handlers for substantive UI actions; record the convention in AGENTS.md.
+- VCS capture already respects `.gitignore` for untracked files. Add coverage for nested ignore rules and negation in Git and jj. Retain tracked changes even if a later ignore rule matches them, as the VCS does.
+- Replace the Python development watcher with Rust `xtask`, exposed through the same `just dev` command. The optional browser-test protocol peer uses Node, already required by Playwright, so Python is no longer a project dependency.
+
+Verification: 20 Rust tests and 13 headless browser tests pass; formatting, Clippy (including the WASM UI and xtask), and skill validation pass. New regression coverage includes whole-paragraph selection across inline markup, persistent highlights and code anchors, drag/reverse Shift-click ranges, releasing a drag outside the document, old/new diff context lines, quoted chat, Enter/Shift+Enter and IME composition, ignore rules, serialized enum compatibility, unknown harness statuses, and browser-opening readiness. Headless Playwright MCP exercised approval, prose/code selection, chat, multiline feedback, restoration after a Rust watcher rebuild, and submission; the Rust development runner exited cleanly after export. These checks used controlled harness fixtures; the previously verified live Codex/MCP integration was not rerun for this refinement.
+
+`just install` rebuilt the release UI and updated the installed `review` CLI with these changes.
+
+## Preparation progress — 2026-10-19
+
+Show elapsed preparation time in both the terminal and browser. The server persists the start time for each attempt; browser refresh retains the clock, retry resets it, and completion/interruption hides the running browser clock. Elapsed time includes waiting for approval/input, with an explicit waiting status. This is a clock, not a completion estimate. Keep the existing delayed browser-opening policy and print the URL for early access. Interactive terminals update one line every second; redirected output reports state changes and a heartbeat every 15 seconds. No Codex launch or permission settings change.
+
+Verification: 21 Rust tests and 14 browser tests pass, including clock persistence, older-state compatibility, reload continuity, retry reset, stopping on completion, and terminal waiting/completion messages. Formatting and Clippy pass. Headless Playwright MCP verified the running browser clock, refresh continuity, approval and completion; a PTY verified the terminal's in-place elapsed updates. Tests used the native-protocol fixture; Codex integration settings are unchanged.

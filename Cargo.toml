@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/review-core", "crates/review-server", "crates/review-ui", "crates/xtask"]
+default-members = ["crates/review-core", "crates/review-server"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+review-core = { path = "crates/review-core" }
+
+[profile.release]
+lto = "thin"
