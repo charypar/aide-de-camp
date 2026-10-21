@@ -47,7 +47,6 @@ pub async fn run() -> Result<()> {
         anyhow::bail!("No review exists in this directory. Run review first.");
     }
     let lock = crate::lock::ReviewLock::acquire(&dir)?;
-    crate::state_dir::StateDirectory::migrate_legacy(&dir)?;
     let mut store = if cli.command.is_some() {
         Store::existing(&dir)?
     } else {

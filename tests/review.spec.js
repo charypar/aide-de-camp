@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -429,7 +429,7 @@ test('current-code excerpts render actual changes and block titles record source
   } finally {await stop(server);}
 });
 
-test('legacy SQLite state migrates with WAL, drafts and feedback, then cleans the entire folder', async ({page}) => {
+test('review resumes drafts and feedback after interruption, then cleans the entire folder', async ({page}) => {
   const dir=fixture(); let server=await start(dir);
   try {
     await ready(page,server.url);
@@ -439,12 +439,6 @@ test('legacy SQLite state migrates with WAL, drafts and feedback, then cleans th
     await expect(page.locator('.feedback-card')).toContainText('Keep this feedback');
     await page.getByRole('textbox',{name:'Feedback comment'}).fill('Unfinished draft');
     await saved(page); const port=server.port; await stop(server);
-    // Recreate the old on-disk layout, retaining the uncheckpointed WAL after SIGKILL.
-    for(const name of readdirSync(join(dir,'.review')).filter(name=>name.startsWith('review.sqlite'))) {
-      renameSync(join(dir,'.review',name),join(dir,name));
-    }
-    renameSync(join(dir,'.review','lock'),join(dir,'review.sqlite.lock'));
-    rmSync(join(dir,'.review'),{recursive:true});
     server=await start(dir,port); await ready(page,server.url);
     await expect(page.locator('.feedback-card')).toContainText('Keep this feedback');
     await expect(page.getByRole('textbox',{name:'Feedback comment'})).toHaveValue('Unfinished draft');

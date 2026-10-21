@@ -31,7 +31,7 @@ Preparation shows an elapsed clock in the terminal and browser, with a distinct 
 
 ## State and feedback
 
-Application state lives in `.review/` in the starting directory: `review.sqlite`, the lock, and temporary files. The folder is ignored by the review input and contains its own Git ignore file. Add `.review/` and `review-feedback-*.md` to the repository's ignore file if desired. Existing root-level `review.sqlite` sessions migrate automatically while stopped, preserving drafts, feedback, and native session references.
+Application state lives in `.review/` in the starting directory: `review.sqlite`, the lock, and temporary files. The folder is ignored by the review input and contains its own Git ignore file. Add `.review/` and `review-feedback-*.md` to the repository's ignore file if desired.
 
 The complete repository workspace is reviewed even when launched in a subdirectory. Git input combines staged, unstaged, and untracked changes against HEAD. In jj it uses the working commit `@`. Both respect `.gitignore` for untracked files, including nested rules and negation; already tracked changes remain part of the review, matching VCS behavior. Source mappings are verified against a captured snapshot; binary changes are represented in the diff and described in prose.
 
