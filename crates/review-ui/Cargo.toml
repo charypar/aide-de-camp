@@ -14,4 +14,4 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 gloo-timers = { version = "0.3", features = ["futures"] }
 console_error_panic_hook = "0.1"
-web-sys = { version = "0.3", features = ["Window","Document","Element","HtmlElement","HtmlInputElement","HtmlTextAreaElement","Node","NodeList","Selection","Range","DomRect","TreeWalker","WebSocket","MessageEvent","CloseEvent","Location","Storage","Navigator","Clipboard","Event","MouseEvent","KeyboardEvent"] }
+web-sys = { version = "0.3", features = ["Window","Document","Element","HtmlElement","FocusOptions","HtmlInputElement","HtmlTextAreaElement","Node","NodeList","Selection","Range","DomRect","DomRectList","TreeWalker","WebSocket","MessageEvent","CloseEvent","Location","Storage","Navigator","Clipboard","Event","MouseEvent","KeyboardEvent"] }

@@ -33,82 +33,98 @@ async function selectProse(page) {
   await page.mouse.down(); await page.mouse.move(box.x + Math.min(250, box.width - 2), box.y + 10, {steps: 12}); await page.mouse.up();
   const quote = await page.evaluate(() => getSelection().toString().trim());
   expect(quote.length).toBeGreaterThan(5);
-  await expect(page.locator('.reference')).toContainText(quote);
+  await expect(page.getByRole('toolbar')).toHaveAttribute('data-reference', `Guide: ${quote}`);
   return quote;
 }
 
-test('selection, chat, recorded feedback, drafts, server restart and direct export', async ({page}) => {
-  const dir = fixture(); let server = await start(dir);
+test('selection actions, separate context, categories, drafts, restart and direct export', async ({page}) => {
+  const dir=fixture(); let server=await start(dir);
   try {
-    await ready(page, server.url);
-    await page.locator('.code-line[data-line="2"]').click();
-    await expect(page.locator('.reference')).toContainText('calculator.rs:2-2 (new)');
-    await page.getByRole('textbox', {name:'Ask Codex', exact:true}).fill('Why addition?');
-    await page.getByRole('button', {name:'Send', exact:true}).click();
-    await expect(page.locator('.message').last()).toContainText('Selected review reference:');
-    await page.getByRole('button', {name:'Add feedback', exact:true}).click();
-    await page.getByRole('textbox', {name:'Feedback comment'}).fill('Cover negative inputs.');
-    await page.getByRole('button', {name:'Record feedback'}).click();
-    await expect(page.locator('.feedback-card')).toContainText('Cover negative inputs.');
-    const quote = await selectProse(page);
-    await page.getByRole('textbox', {name:'Feedback comment'}).fill('Explain this motivation.');
-    await page.getByRole('button', {name:'Record feedback'}).click();
-    await expect(page.locator('.feedback-card')).toHaveCount(2);
-    await page.getByRole('button', {name:'Clear reference'}).click();
-    await page.getByRole('textbox', {name:'Feedback comment'}).fill('Overall: looks promising.');
-    await page.getByRole('button', {name:'Record feedback'}).click();
-    await expect(page.locator('.feedback-card')).toHaveCount(3);
-    await page.getByRole('textbox', {name:'Feedback comment'}).fill('Unfinished feedback');
-    await page.getByRole('button', {name:'Conversation', exact:true}).click();
-    await page.getByRole('textbox', {name:'Ask Codex', exact:true}).fill('Unfinished question');
-    await saved(page);
-    const port = server.port; await stop(server); server = await start(dir, port);
-    await page.reload(); await expect(page.getByRole('textbox', {name:'Ask Codex', exact:true})).toHaveValue('Unfinished question');
-    await expect(page.locator('.reference')).toContainText('WHOLE REVIEW');
-    await page.getByRole('button', {name:'Feedback (3)', exact:true}).click();
-    await expect(page.getByRole('textbox', {name:'Feedback comment'})).toHaveValue('Unfinished feedback');
-    await expect(page.locator('.feedback-card')).toHaveCount(3);
-    await page.getByRole('button', {name:'Submit review'}).click();
-    await expect(page.getByText('Review submitted. Feedback saved to', {exact:false})).toBeVisible();
-    const filename = readdirSync(dir).find(f => f.startsWith('review-feedback-'));
-    const output = readFileSync(join(dir, filename), 'utf8');
-    expect(output).toContain('calculator.rs:2-2 (new)');expect(output).toContain(`> ${quote}`);
-    expect(output).toContain('Overall: looks promising.');expect(output).not.toContain('Why addition?');expect(output).not.toContain('Unfinished feedback');
-    await expect.poll(() => server.child.exitCode).toBe(0);
-    await expect(page.locator('.connection')).toHaveText('Submitted');
-    await expect(page.getByRole('button', {name:'Submit review'})).toBeDisabled();
-    expect(readdirSync(dir).filter(name => name.startsWith('review.sqlite') || name.startsWith('.review'))).toEqual([]);
-    expect(output.indexOf('Overall: looks promising.')).toBeLessThan(output.indexOf('calculator.rs:2-2'));
-    expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('review-outbox-')))).toEqual([]);
-    server = await start(dir, port);
     await ready(page,server.url);
-    await expect(page.getByRole('button', {name:'Submit review'})).toBeEnabled();
-    await expect(page.getByRole('button', {name:'Feedback (0)',exact:true})).toBeVisible();
-    await expect(page.locator('.message')).toHaveCount(0);
-    expect(readFileSync(join(dir, filename),'utf8')).toBe(output);
-  } finally { await stop(server); }
+    await page.getByRole('button',{name:'Hide chat',exact:true}).click();
+    await page.locator('.code-line[data-line="2"]').click();
+    await page.getByRole('button',{name:'Discuss with agent',exact:true}).click();
+    const chat=page.getByRole('textbox',{name:'Ask Codex',exact:true});
+    await expect(chat).toBeFocused();
+    await expect(page.locator('.reference')).toContainText('calculator.rs:2-2');
+    await page.locator('.code-line[data-line="1"]').click();
+    await expect(page.locator('.reference')).toContainText('calculator.rs:2-2');
+    await chat.fill('Why addition?'); await chat.press('Enter');
+    await expect(page.locator('.message.user .message-reference')).toContainText('a + b');
+    await page.locator('.code-line[data-line="2"]').click();
+    await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+    await expect(page.getByRole('textbox',{name:'Feedback comment'})).toBeFocused();
+    await page.getByRole('textbox',{name:'Feedback comment'}).fill('Cover negative inputs.');
+    await page.getByRole('button',{name:'Record feedback'}).click();
+    const quote=await selectProse(page);
+    await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+    await page.getByRole('radio',{name:'Question',exact:true}).click();
+    await page.getByRole('textbox',{name:'Feedback comment'}).fill('Why this approach?');
+    await page.getByRole('button',{name:'Record feedback'}).click();
+    await expect(page.locator('.feedback-card')).toHaveCount(2);
+    await expect(page.locator('.code-line[data-line="2"]')).toHaveAttribute('data-feedback','true');
+    await page.getByRole('button',{name:'Overall feedback',exact:false}).click();
+    await page.getByRole('textbox',{name:'Overall feedback',exact:true}).fill('Overall: looks promising.');
+    await page.locator('.code-line[data-line="3"]').click();
+    await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+    await page.getByRole('textbox',{name:'Feedback comment'}).fill('Unfinished feedback');
+    await chat.fill('Unfinished question');
+    await page.getByRole('button',{name:'Hide chat',exact:true}).click();
+    await page.getByRole('button',{name:'Overall feedback',exact:false}).click();
+    await saved(page); const port=server.port; await stop(server); server=await start(dir,port);
+    await page.reload();
+    await expect(page.getByRole('textbox',{name:'Ask Codex',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('textbox',{name:'Overall feedback',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('textbox',{name:'Feedback comment'})).toHaveValue('Unfinished feedback');
+    await expect(page.locator('.feedback-card')).toHaveCount(3);
+    await expect(page.locator('.category-badge')).toHaveText(['Change','Question']);
+    await page.getByRole('button',{name:'Show chat',exact:true}).click();
+    await expect(chat).toHaveValue('Unfinished question');
+    await page.getByRole('button',{name:'Overall feedback',exact:false}).click();
+    await expect(page.getByRole('textbox',{name:'Overall feedback',exact:true})).toHaveValue('Overall: looks promising.');
+    await page.getByRole('button',{name:'Submit review'}).click();
+    await expect(page.locator('.completion')).toBeVisible();
+    await expect.poll(()=>server.child.exitCode).toBe(0);
+    const filename=readdirSync(dir).find(f=>f.startsWith('review-feedback-'));
+    const output=readFileSync(join(dir,filename),'utf8');
+    expect(output).toContain('# Overall feedback\n\nOverall: looks promising.');
+    expect(output).toContain('# Changes'); expect(output).toContain('# Questions');
+    expect(output.indexOf('Cover negative inputs.')).toBeLessThan(output.indexOf('# Questions'));
+    expect(output.indexOf('Why this approach?')).toBeGreaterThan(output.indexOf('# Questions'));
+    expect(output).toContain(`> ${quote}`); expect(output).toContain('calculator.rs:2-2');
+    expect(output).not.toContain('Unfinished feedback'); expect(output).not.toContain('Why addition?');
+    expect(readdirSync(dir).filter(n=>n.startsWith('.review'))).toEqual([]);
+    expect(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('review-outbox-')))).toEqual([]);
+    server=await start(dir,port); await ready(page,server.url);
+    await expect(page.locator('.feedback-card')).toHaveCount(0); await expect(page.locator('.message')).toHaveCount(0);
+    expect(readFileSync(join(dir,filename),'utf8')).toBe(output);
+  } finally {await stop(server);}
 });
 
-test('manual references, deselection, feedback editing, and changed-code archive', async ({page}) => {
- const dir=fixture();let server=await start(dir);
- try{
-  await ready(page,server.url);await page.getByText('Reference a file range',{exact:true}).click();
-  await page.getByLabel('Source file', {exact:true}).fill('calculator.rs');await page.getByRole('spinbutton',{name:'Start line'}).fill('1');await page.getByRole('spinbutton',{name:'End line'}).fill('3');await page.getByRole('button',{name:'Use',exact:true}).click();
-  await expect(page.locator('.reference')).toContainText('calculator.rs:1-3');
-  await page.getByRole('button',{name:'Add feedback',exact:true}).click();await page.getByRole('textbox',{name:'Feedback comment'}).fill('Initial feedback');await page.getByRole('button',{name:'Record feedback'}).click();
-  await page.getByRole('button',{name:'Edit',exact:true}).click();await page.getByRole('textbox',{name:'Feedback comment'}).fill('Revised feedback');await page.getByRole('button',{name:'Record feedback'}).click();await expect(page.locator('.feedback-card')).toContainText('Revised feedback');await expect(page.locator('.feedback-card')).toHaveCount(1);
-  await page.getByRole('button',{name:'Clear reference'}).click();await expect(page.locator('.reference')).toContainText('Select guide text');
-  await saved(page);writeFileSync(join(dir,'calculator.rs'),'pub fn add(a: i32, b: i32) -> i32 {\n    a + b + 1\n}\n');
-  // No polling and no command-triggered capture: feedback still belongs to the original snapshot.
-  await page.getByRole('textbox',{name:'Feedback comment'}).fill('Keep the original snapshot');
-  await page.getByRole('button',{name:'Record feedback'}).click();
-  await expect(page.locator('.feedback-card')).toHaveCount(2);
+test('manual references, feedback editing, deletion, and changed-code archive', async ({page}) => {
+ const dir=fixture(); let server=await start(dir);
+ try {
+  await ready(page,server.url); await page.getByText('Reference a file range',{exact:true}).click();
+  await page.getByLabel('Source file',{exact:true}).fill('calculator.rs');
+  await page.getByRole('spinbutton',{name:'Start line'}).fill('1'); await page.getByRole('spinbutton',{name:'End line'}).fill('3');
+  await page.getByRole('button',{name:'Use',exact:true}).click(); await expect(page.locator('.reference')).toContainText('calculator.rs:1-3');
+  await page.locator('.code-line[data-line="2"]').click(); await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+  await page.getByRole('textbox',{name:'Feedback comment'}).fill('Initial feedback'); await page.getByRole('button',{name:'Record feedback'}).click();
+  await page.getByRole('button',{name:'Edit',exact:true}).click(); await page.getByRole('textbox',{name:'Feedback comment'}).fill('Revised feedback');
+  await page.getByRole('radio',{name:'Question',exact:true}).click(); await page.getByRole('button',{name:'Record feedback'}).click();
+  await expect(page.locator('.feedback-card')).toContainText('Revised feedback'); await expect(page.locator('.category-badge')).toHaveText('Question');
+  await page.getByRole('button',{name:'Clear reference'}).click(); await expect(page.locator('.reference')).toContainText('WHOLE REVIEW');
+  await expect(page.locator('.code-line[data-line="2"]')).toHaveAttribute('data-feedback','true');
+  await page.getByRole('button',{name:'Delete',exact:true}).click();
+  await expect(page.locator('.code-line[data-line="2"]')).toHaveAttribute('data-feedback','false');
+  await page.getByRole('button',{name:'Overall feedback',exact:false}).click();
+  writeFileSync(join(dir,'calculator.rs'),'pub fn add(a: i32, b: i32) -> i32 {\n    a + b + 1\n}\n');
+  await page.getByRole('textbox',{name:'Overall feedback',exact:true}).fill('Keep the original snapshot'); await saved(page);
   await expect(page.locator('#guide')).not.toContainText('a + b + 1');
   const port=server.port; await stop(server); server=await start(dir,port); await ready(page,server.url);
   await expect(page.getByText('Previous review is archived',{exact:false})).toBeVisible();
-  await expect(page.getByRole('button',{name:'Feedback (0)',exact:true})).toBeVisible();
-  await expect(page.locator('#guide')).toContainText('a + b + 1');
- }finally{await stop(server);}
+  await expect(page.locator('.feedback-card')).toHaveCount(0); await expect(page.locator('#guide')).toContainText('a + b + 1');
+ } finally {await stop(server);}
 });
 
 test('approval, question, form, interruption and recovered partial response', async ({page}) => {
@@ -132,10 +148,10 @@ test('durable command IDs prevent duplicate feedback after an uncertain connecti
   await page.evaluate(async () => {
    const request = async () => new Promise((resolve,reject) => {
     const ws = new WebSocket(`ws://${location.host}/ws`);let sent=false;
-    ws.onerror=reject;ws.onmessage=e=>{const message=JSON.parse(e.data);if(message.type==='snapshot'&&!sent){sent=true;ws.send(JSON.stringify({id:'retry-test',review_id:message.review.id,command:{type:'feedback',id:'comment-test',text:'Only once',reference:null}}));}if(message.type==='ack'){ws.close();resolve();}};
+    ws.onerror=reject;ws.onmessage=e=>{const message=JSON.parse(e.data);if(message.type==='snapshot'&&!sent){sent=true;ws.send(JSON.stringify({id:'retry-test',review_id:message.review.id,command:{type:'feedback',id:'comment-test',text:'Only once',category:'change',prose_offset:null,code_block:0,reference:{kind:'code',file:'calculator.rs',start:1,end:1,side:'new'}}}));}if(message.type==='ack'){ws.close();resolve();}};
    });await request();await request();
   });
-  await page.getByRole('button',{name:'Feedback (1)',exact:true}).click();await expect(page.locator('.feedback-card')).toHaveCount(1);
+  await expect(page.locator('.feedback-card')).toHaveCount(1);
  }finally{await stop(server);}
 });
 
@@ -144,65 +160,46 @@ test('reading position and source selection survive a fresh browser page', async
  try {
   await ready(page,server.url);await page.locator('.code-line[data-file="long.rs"][data-line="80"]').click();await saved(page);
   const scroll=await page.locator('#reading').evaluate(el=>el.scrollTop);expect(scroll).toBeGreaterThan(500);
-  await page.reload();await expect(page.locator('.reference')).toContainText('long.rs:80-80');
+  await page.reload();await expect(page.getByRole('toolbar')).toHaveAttribute('data-reference',/long.rs:80-80/);
   await expect.poll(()=>page.locator('#reading').evaluate(el=>el.scrollTop)).toBeCloseTo(scroll,0);
   await expect(page.locator('.code-line[data-file="long.rs"][data-line="80"]')).toHaveAttribute('data-selected','true');
  }finally{await stop(server);}
 });
 
 
-test('left panel, persistent prose highlight, implicit general feedback and one-off lifecycle', async ({page}) => {
-  const dir=fixture(); const server=await start(dir);
-  try {
-    await ready(page,server.url);
-    await expect(page.getByRole('button',{name:'New review',exact:true})).toHaveCount(0);
-    await expect(page.getByRole('button',{name:'Prepare / regenerate guide'})).toHaveCount(0);
-    await expect(page.locator('.message')).toHaveCount(0);
-    const panel=await page.locator('aside').boundingBox();
-    const guide=await page.locator('main').boundingBox();
-    expect(panel.x + panel.width).toBeLessThanOrEqual(guide.x);
-    const title=await page.locator('#guide h1').first().boundingBox();
-    const metadata=await page.locator('.document-heading').boundingBox();
-    const firstParagraph=await page.locator('#guide .prose p').first().boundingBox();
-    expect(title.y + title.height).toBeLessThanOrEqual(metadata.y);
-    expect(metadata.y + metadata.height).toBeLessThanOrEqual(firstParagraph.y);
-
-    const quote=await selectProse(page);
-    await page.getByRole('textbox',{name:'Ask Codex',exact:true}).fill('Question about this passage');
-    const highlighted=()=>page.evaluate(()=>{
-      const highlight=CSS.highlights.get('review-reference');
-      return highlight ? [...highlight].map(range=>range.toString()).join('') : '';
-    });
-    await expect.poll(highlighted).toBe(quote);
-    const ref=await page.locator('.reference').boundingBox();
-    const input=await page.getByRole('textbox',{name:'Ask Codex',exact:true}).boundingBox();
-    expect(input.y - (ref.y+ref.height)).toBeLessThan(80);
-    await saved(page); await page.reload();
-    await expect.poll(highlighted).toBe(quote);
-    await page.getByRole('button',{name:'Clear reference'}).click();
-    await expect.poll(highlighted).toBe('');
-    await page.getByRole('button',{name:'Feedback (0)',exact:true}).click();
-    for (const text of ['General comment one','General comment two']) {
-      await page.getByRole('textbox',{name:'Feedback comment'}).fill(text);
-      await page.getByRole('button',{name:'Record feedback'}).click();
-    }
-    await expect(page.locator('.feedback-card')).toHaveCount(2);
-    await expect(page.locator('.feedback-card small')).toHaveText(['Overall feedback','Overall feedback']);
-    await page.getByRole('button',{name:'Submit review'}).click();
-    await expect(page.locator('.completion')).toBeVisible();
-    await expect.poll(()=>server.child.exitCode).toBe(0);
-    const exported=readFileSync(join(dir,readdirSync(dir).find(name=>name.startsWith('review-feedback-'))),'utf8');
-    expect(exported).toBe('# Overall feedback\n\nGeneral comment one\n\nGeneral comment two\n\n');
-  } finally { await stop(server); }
+test('independent panels, persistent prose feedback, and single overall field', async ({page}) => {
+ const dir=fixture(); const server=await start(dir);
+ try {
+  await ready(page,server.url);
+  const panel=await page.locator('aside').boundingBox(), guide=await page.locator('main').boundingBox();
+  expect(panel.x+panel.width).toBeLessThanOrEqual(guide.x);
+  const title=await page.locator('#guide h1').first().boundingBox(), metadata=await page.locator('.document-heading').boundingBox();
+  expect(title.y+title.height).toBeLessThanOrEqual(metadata.y);
+  const quote=await selectProse(page);
+  await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+  await page.getByRole('textbox',{name:'Feedback comment'}).fill('Prose feedback'); await page.getByRole('button',{name:'Record feedback'}).click();
+  await page.locator('.code-line').first().click();
+  const highlighted=()=>page.evaluate(()=>[...(CSS.highlights.get('review-changes')||[])].map(r=>r.toString()).join(''));
+  await expect.poll(highlighted).toBe(quote);
+  await saved(page); await page.reload(); await expect.poll(highlighted).toBe(quote);
+  await page.getByRole('button',{name:'Hide chat',exact:true}).click();
+  const wider=await page.locator('main').boundingBox(); expect(wider.width).toBeGreaterThan(guide.width);
+  await page.getByRole('button',{name:'Delete',exact:true}).click(); await expect.poll(highlighted).toBe('');
+  await page.getByRole('button',{name:'Overall feedback',exact:false}).click();
+  const overall=page.getByRole('textbox',{name:'Overall feedback',exact:true});
+  await overall.fill('Initial overall assessment'); await overall.fill('Final overall assessment');
+  await page.getByRole('button',{name:'Submit review'}).click(); await expect.poll(()=>server.child.exitCode).toBe(0);
+  const output=readFileSync(join(dir,readdirSync(dir).find(n=>n.startsWith('review-feedback-'))),'utf8');
+  expect(output).toBe('# Overall feedback\n\nFinal overall assessment\n\n');
+ } finally {await stop(server);}
 });
 
 test('CLI conclusion exports the saved review even after workspace edits', async ({page}) => {
   const dir=fixture(); const server=await start(dir);
   try {
     await ready(page,server.url);
-    await page.getByRole('button',{name:'Feedback (0)',exact:true}).click();
-    await page.getByRole('textbox',{name:'Feedback comment'}).fill('Preserve this reviewed snapshot');
-    await page.getByRole('button',{name:'Record feedback'}).click();
+    await page.getByRole('button',{name:'Overall feedback',exact:false}).click();
+    await page.getByRole('textbox',{name:'Overall feedback',exact:true}).fill('Preserve this reviewed snapshot');
     await saved(page); await stop(server);
     writeFileSync(join(dir,'calculator.rs'),'// changes after reviewing\n');
     const path=execFileSync(binary,['--path',dir,'conclude'],{encoding:'utf8'}).trim();
@@ -224,6 +221,8 @@ test('failed export leaves the review usable and does not overwrite a handover',
     }));
     const path=join(dir,`review-feedback-${id}.md`);
     writeFileSync(path,'An existing handover');
+    await page.getByRole('button',{name:'Overall feedback',exact:false}).click();
+    await page.getByRole('textbox',{name:'Overall feedback',exact:true}).fill('Recorded assessment');
     await page.getByRole('button',{name:'Submit review'}).click();
     await expect(page.getByRole('alert')).toContainText('already exists with different content');
     await expect(page.locator('.completion')).toHaveCount(0);
@@ -231,10 +230,9 @@ test('failed export leaves the review usable and does not overwrite a handover',
     expect(readdirSync(join(dir,'.review'))).toContain('review.sqlite');
     expect(readdirSync(join(dir,'.review'))).toContain('lock');
     expect(readFileSync(path,'utf8')).toBe('An existing handover');
-    await page.getByRole('button',{name:'Feedback (0)',exact:true}).click();
-    await page.getByRole('textbox',{name:'Feedback comment'}).fill('Still editable after failed export');
-    await page.getByRole('button',{name:'Record feedback'}).click();
-    await expect(page.locator('.feedback-card')).toContainText('Still editable after failed export');
+    await page.getByRole('textbox',{name:'Overall feedback',exact:true}).fill('Still editable after failed export');
+    await saved(page); await page.reload();
+    await expect(page.getByRole('textbox',{name:'Overall feedback',exact:true})).toHaveValue('Still editable after failed export');
   } finally { await stop(server); }
 });
 
@@ -257,9 +255,10 @@ for (const kind of ['command', 'mcp']) {
         await page.getByRole('button',{name:'Retry preparation',exact:true}).click();
         await expect(approve).toBeInViewport();
       }
-      // Pending preparation requests survive reload and remain available on either tab.
-      await page.getByRole('button',{name:'Feedback (0)',exact:true}).click();
+      // Requests remain discoverable with chat collapsed and after reload.
+      await page.getByRole('button',{name:'Hide chat',exact:true}).click();
       await saved(page); await page.reload();
+      await page.getByRole('button',{name:'Codex needs your response',exact:true}).click();
       await expect(approve).toBeInViewport();
       await approve.click();
       await expect(page.locator('#guide')).toContainText('Prepared after your approval.');
@@ -312,6 +311,7 @@ test('whole-paragraph selection persists and is quoted in keyboard-submitted cha
     await paragraph.click({clickCount:3});
     await expect.poll(()=>highlightedProse(page)).toBe(quote);
     const input=page.getByRole('textbox',{name:'Ask Codex',exact:true});
+    await page.getByRole('button',{name:'Discuss with agent',exact:true}).click();
     await input.fill('Explain this paragraph');
     await input.dispatchEvent('keydown',{key:'Enter',isComposing:true});
     await expect(page.locator('.message')).toHaveCount(0);
@@ -354,13 +354,13 @@ test('code ranges support dragging, reverse Shift-click, quotation and restorati
     const last=page.locator('.code-line[data-line="3"]');
     await first.click();
     await last.click({modifiers:['Shift']});
-    await expect(page.locator('.reference')).toContainText('calculator.rs:1-3');
+    await expect(page.getByRole('toolbar')).toHaveAttribute('data-reference', /calculator.rs:1-3/);
     await expect(page.locator('.code-line[data-selected=true]')).toHaveCount(3);
     await saved(page); await page.reload();
     await expect(page.locator('.code-line[data-selected=true]')).toHaveCount(3);
     await last.click();
     await first.click({modifiers:['Shift']});
-    await expect(page.locator('.reference')).toContainText('calculator.rs:1-3');
+    await expect(page.getByRole('toolbar')).toHaveAttribute('data-reference', /calculator.rs:1-3/);
     const a=await first.boundingBox(), b=await last.boundingBox();
     await page.mouse.move(a.x+100,a.y+a.height/2); await page.mouse.down();
     await page.mouse.move(b.x+110,b.y+b.height/2,{steps:10}); await page.mouse.up();
@@ -373,6 +373,7 @@ test('code ranges support dragging, reverse Shift-click, quotation and restorati
     await first.hover();
     await expect(page.locator('.code-line[data-selected=true]')).toHaveCount(3);
     const input=page.getByRole('textbox',{name:'Ask Codex',exact:true});
+    await page.getByRole('button',{name:'Discuss with agent',exact:true}).click();
     await input.fill('Explain this whole function'); await input.press('Enter');
     await expect(page.locator('.message.user .message-reference')).toContainText('a + b');
     await expect(page.locator('.message').last()).toContainText('a + b');
@@ -392,12 +393,12 @@ test('diff range selection retains old or new side through context lines', async
     await page.locator('.code-line.removed').waitFor();
     await page.locator('.code-line.removed').click();
     await page.locator('.code-line.context[data-line="3"]').click({modifiers:['Shift']});
-    await expect(page.locator('.reference')).toContainText('calculator.rs:2-3 (old)');
+    await expect(page.getByRole('toolbar')).toHaveAttribute('data-reference', /calculator.rs:2-3 \(old\)/);
     await expect(page.locator('.code-line[data-selected=true]')).toHaveCount(2);
     await expect(page.locator('.code-line.added')).toHaveAttribute('data-selected','false');
     await page.locator('.code-line.added').click();
     await page.locator('.code-line.context[data-line="3"]').click({modifiers:['Shift']});
-    await expect(page.locator('.reference')).toContainText('calculator.rs:2-3 (new)');
+    await expect(page.getByRole('toolbar')).toHaveAttribute('data-reference', /calculator.rs:2-3 \(new\)/);
     await expect(page.locator('.code-line[data-selected=true]')).toHaveCount(2);
     await expect(page.locator('.code-line.removed')).toHaveAttribute('data-selected','false');
   } finally {await stop(server);}
@@ -417,7 +418,7 @@ test('current-code excerpts render actual changes and block titles record source
     await expect(page.locator('.code-line.added')).toContainText('a + b');
     await expect(page.locator('.code-line.context')).toHaveCount(2);
     await page.locator('.code-reference').click({clickCount:3});
-    await expect(page.locator('.reference')).toContainText('calculator.rs:1-3 (new)');
+    await expect(page.getByRole('toolbar')).toHaveAttribute('data-reference', /calculator.rs:1-3 \(new\)/);
     await page.getByRole('button',{name:'Add feedback',exact:true}).click();
     await page.getByRole('textbox',{name:'Feedback comment'}).fill('Feedback on this block');
     await page.getByRole('button',{name:'Record feedback',exact:true}).click();
@@ -433,14 +434,17 @@ test('review resumes drafts and feedback after interruption, then cleans the ent
   const dir=fixture(); let server=await start(dir);
   try {
     await ready(page,server.url);
-    await page.getByRole('button',{name:'Feedback (0)',exact:true}).click();
+    await page.locator('.code-line[data-line="2"]').click();
+    await page.getByRole('button',{name:'Add feedback',exact:true}).click();
     await page.getByRole('textbox',{name:'Feedback comment'}).fill('Keep this feedback');
     await page.getByRole('button',{name:'Record feedback',exact:true}).click();
-    await expect(page.locator('.feedback-card')).toContainText('Keep this feedback');
+    await expect(page.locator('.feedback-card').filter({hasText:'Keep this feedback'})).toBeVisible();
+    await page.locator('.code-line[data-line="3"]').click();
+    await page.getByRole('button',{name:'Add feedback',exact:true}).click();
     await page.getByRole('textbox',{name:'Feedback comment'}).fill('Unfinished draft');
     await saved(page); const port=server.port; await stop(server);
     server=await start(dir,port); await ready(page,server.url);
-    await expect(page.locator('.feedback-card')).toContainText('Keep this feedback');
+    await expect(page.locator('.feedback-card').filter({hasText:'Keep this feedback'})).toBeVisible();
     await expect(page.getByRole('textbox',{name:'Feedback comment'})).toHaveValue('Unfinished draft');
     expect(readdirSync(dir).filter(name=>name.startsWith('review.sqlite'))).toEqual([]);
     expect(readdirSync(join(dir,'.review'))).toContain('review.sqlite');
@@ -454,3 +458,191 @@ test('review resumes drafts and feedback after interruption, then cleans the ent
     expect(output).not.toContain('Unfinished draft');
   } finally {await stop(server);}
 });
+
+test('overlapping comments stay separate, align without overlap, and focus from their highlight', async ({page}) => {
+ const dir=fixture(); const server=await start(dir);
+ try {
+  await ready(page,server.url);
+  const row=page.locator('.code-line[data-line="2"]');
+  for (const text of ['First comment','Second comment']) {
+   await row.click(); await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+   await page.getByRole('textbox',{name:'Feedback comment'}).fill(text);
+   await page.getByRole('button',{name:'Record feedback'}).click();
+  }
+  const cards=page.locator('.feedback-card'); await expect(cards).toHaveCount(2);
+  const a=await cards.nth(0).boundingBox(), b=await cards.nth(1).boundingBox(), line=await row.boundingBox();
+  expect(a.x).toBeGreaterThan(line.x+line.width); expect(Math.abs(a.y-line.y)).toBeLessThan(3);
+  expect(b.y).toBeGreaterThanOrEqual(a.y+a.height);
+  await row.click(); await expect(cards.nth(0)).toHaveClass(/focused/); await expect(cards.nth(0)).toBeFocused();
+  await cards.nth(0).getByRole('button',{name:'Delete',exact:true}).click();
+  await expect(row).toHaveAttribute('data-feedback','true');
+  await expect(cards).toHaveCount(1);
+  await cards.getByRole('button',{name:'Edit',exact:true}).click();
+  await page.getByRole('textbox',{name:'Feedback comment'}).fill('Unfinished edit');
+  await page.locator('.code-line[data-line="3"]').click(); await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+  await page.getByRole('textbox',{name:'Feedback comment'}).last().fill('Separate draft');
+  await saved(page); await page.reload();
+  await expect(page.getByRole('textbox',{name:'Feedback comment'}).nth(0)).toHaveValue('Unfinished edit');
+  await expect(page.getByRole('textbox',{name:'Feedback comment'}).nth(1)).toHaveValue('Separate draft');
+  await page.getByRole('button',{name:'Cancel',exact:true}).last().click();
+  await page.getByRole('button',{name:'Cancel',exact:true}).click();
+  await expect(cards).toContainText('Second comment');
+  await cards.getByRole('button',{name:'Delete',exact:true}).click();
+  await expect(row).toHaveAttribute('data-feedback','false');
+ } finally {await stop(server);}
+});
+
+test('repeated prose quotes preserve their exact feedback anchors across reload', async ({page}) => {
+ const dir=fixture(); writeFileSync(join(dir,'other.rs'),'// another file\n'); const server=await start(dir);
+ try {
+  await ready(page,server.url);
+  const paragraphs=page.locator('#guide .prose p').filter({hasText:'Review how this file contributes'});
+  await expect(paragraphs).toHaveCount(2);
+  await paragraphs.nth(1).click({clickCount:3});
+  await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+  await page.getByRole('textbox',{name:'Feedback comment'}).fill('About the second occurrence');
+  await page.getByRole('button',{name:'Record feedback'}).click();
+  const anchoredToSecond=()=>page.evaluate(()=>{
+    const range=[...(CSS.highlights.get('review-changes')||[])][0];
+    const paragraphs=[...document.querySelectorAll('#guide .prose p')].filter(p=>p.textContent.includes('Review how this file contributes'));
+    return !!range && paragraphs[1].contains(range.startContainer);
+  });
+  await expect.poll(anchoredToSecond).toBe(true); await saved(page); await page.reload();
+  await expect.poll(anchoredToSecond).toBe(true);
+  await paragraphs.nth(1).click({position:{x:20,y:10}}); await expect(page.locator('.feedback-card')).toBeFocused();
+ } finally {await stop(server);}
+});
+
+test('chat follows streaming text, pauses for reading history, and resumes on demand', async ({page}) => {
+ const dir=fixture(); const server=await start(dir);
+ try {
+  await ready(page,server.url);
+  const input=page.getByRole('textbox',{name:'Ask Codex',exact:true});
+  await input.fill('fixture:stream'); await input.press('Enter');
+  await expect(page.locator('.message').last()).toContainText('Streaming paragraph 10');
+  const gap=()=>page.locator('#conversation').evaluate(el=>el.scrollHeight-el.clientHeight-el.scrollTop);
+  await expect.poll(gap).toBeLessThan(45);
+  await page.locator('#conversation').evaluate(el=>el.scrollTop=0);
+  await expect(page.getByRole('button',{name:'Jump to latest',exact:true})).toBeVisible();
+  await expect(page.locator('.message').last()).toContainText('Streaming paragraph 20');
+  expect(await page.locator('#conversation').evaluate(el=>el.scrollTop)).toBe(0);
+  await page.getByRole('button',{name:'Hide chat',exact:true}).click(); await saved(page); await page.reload();
+  await page.getByRole('button',{name:'Show chat',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Jump to latest',exact:true})).toBeVisible();
+  expect(await page.locator('#conversation').evaluate(el=>el.scrollTop)).toBe(0);
+  await page.getByRole('button',{name:'Jump to latest',exact:true}).click();
+  await expect.poll(gap).toBeLessThan(45);
+  await expect(page.locator('.message').last()).toContainText('Streaming paragraph 39');
+  await expect.poll(gap).toBeLessThan(45);
+ } finally {await stop(server);}
+});
+
+test('feedback stays on the selected occurrence of a repeated code excerpt', async ({page}) => {
+ const dir=fixture(); const server=await start(dir,0,'repeated-code');
+ try {
+  await page.goto(server.url); await page.getByRole('button',{name:'Approve once',exact:true}).click();
+  const rows=page.locator('.code-line[data-line="2"]'); await expect(rows).toHaveCount(2);
+  await rows.nth(1).click(); await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+  await page.getByRole('textbox',{name:'Feedback comment'}).fill('Comment on the second excerpt');
+  await page.getByRole('button',{name:'Record feedback'}).click();
+  await expect(rows.nth(0)).toHaveAttribute('data-feedback','false'); await expect(rows.nth(1)).toHaveAttribute('data-feedback','true');
+  await saved(page); await page.reload();
+  await expect(rows.nth(0)).toHaveAttribute('data-feedback','false'); await expect(rows.nth(1)).toHaveAttribute('data-feedback','true');
+  await rows.nth(1).scrollIntoViewIfNeeded();
+  const line=await rows.nth(1).boundingBox(), card=await page.locator('.feedback-card').boundingBox();
+  expect(Math.abs(line.y-card.y)).toBeLessThan(3);
+ } finally {await stop(server);}
+});
+
+test('chat toggle stays beside the brand and feedback fills the right margin', async ({page}) => {
+ const dir=fixture(); const server=await start(dir);
+ try {
+  await ready(page,server.url);
+  const toggle=page.getByRole('button',{name:'Hide chat',exact:true});
+  const brand=await page.getByText('DevDeck',{exact:true}).boundingBox();
+  const control=await toggle.boundingBox();
+  expect(control.x+control.width).toBeLessThan(brand.x);
+  await expect(toggle).toHaveAttribute('title','Hide chat');
+  await page.locator('.code-line[data-line="2"]').click();
+  await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+  const input=page.getByRole('textbox',{name:'Feedback comment'});
+  await input.fill('The margin should give this comment room to breathe.');
+  const assertMargin=async()=>{
+   const pane=await page.locator('#reading').boundingBox();
+   const card=await page.locator('.feedback-card').boundingBox();
+   const editor=await input.boundingBox();
+   expect(Math.abs(card.x+card.width-(pane.x+pane.width))).toBeLessThan(2);
+   expect(card.width).toBeGreaterThanOrEqual(340);
+   expect(editor.width).toBeGreaterThanOrEqual(card.width-40);
+   expect(editor.height).toBeGreaterThanOrEqual(150);
+   const style=await page.locator('.feedback-card').evaluate(el=>{
+    const s=getComputedStyle(el);return {border:s.borderTopWidth,radius:s.borderTopLeftRadius,shadow:s.boxShadow};
+   });
+   expect(style).toEqual({border:'0px',radius:'0px',shadow:'none'});
+  };
+  await assertMargin();
+  await toggle.click(); await assertMargin();
+  await saved(page); await page.reload();
+  await expect(input).toHaveValue('The margin should give this comment room to breathe.');
+  await expect(page.getByRole('button',{name:'Show chat',exact:true})).toBeVisible();
+  await assertMargin();
+  await page.getByRole('button',{name:'Record feedback',exact:true}).click();
+  await expect(page.locator('.feedback-card')).toContainText('The margin should give this comment room to breathe.');
+ } finally {await stop(server);}
+});
+
+test('adding inline feedback keeps the reading position and uses a white editor', async ({page}) => {
+ const dir=fixture(); writeFileSync(join(dir,'long.rs'),Array.from({length:140},(_,i)=>`// source line ${i+1}`).join('\n')+'\n');
+ const server=await start(dir);
+ try {
+  await ready(page,server.url);
+  const row=page.locator('.code-line[data-file="long.rs"][data-line="100"]');
+  await row.evaluate(el=>{
+   const reading=document.getElementById('reading');
+   reading.scrollTop+=el.getBoundingClientRect().top-reading.getBoundingClientRect().top-reading.clientHeight+80;
+  });
+  await row.click(); await saved(page);
+  const before=await page.locator('#reading').evaluate(el=>el.scrollTop);
+  expect(before).toBeGreaterThan(1000);
+  await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+  const input=page.getByRole('textbox',{name:'Feedback comment'});
+  await expect(input).toBeFocused(); await saved(page);
+  expect(await page.locator('#reading').evaluate(el=>el.scrollTop)).toBe(before);
+  await expect(input).toHaveCSS('background-color','rgb(255, 255, 255)');
+  await page.reload();
+  await expect.poll(()=>page.locator('#reading').evaluate(el=>el.scrollTop)).toBe(before);
+ } finally {await stop(server);}
+});
+
+for (const method of ['browser','CLI']) {
+ test(`${method} conclusion without recorded feedback reports completion and creates no export`, async ({page}) => {
+  const dir=fixture(); const server=await start(dir);
+  try {
+   await ready(page,server.url);
+   await page.getByRole('button',{name:'Overall feedback',exact:false}).click();
+   await page.getByRole('textbox',{name:'Overall feedback',exact:true}).fill(' \n\t');
+   await page.locator('.code-line[data-line="2"]').click();
+   await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+   await page.getByRole('textbox',{name:'Feedback comment'}).fill('Temporary recorded comment');
+   await page.getByRole('button',{name:'Record feedback',exact:true}).click();
+   await page.getByRole('button',{name:'Delete',exact:true}).click();
+   await page.locator('.code-line[data-line="3"]').click();
+   await page.getByRole('button',{name:'Add feedback',exact:true}).click();
+   await page.getByRole('textbox',{name:'Feedback comment'}).fill('An unfinished draft is not feedback');
+   await saved(page);
+   if (method === 'browser') {
+    await page.getByRole('button',{name:'Submit review',exact:true}).click();
+    await expect(page.locator('.completion')).toContainText('Review concluded. No feedback recorded.');
+    await expect(page.locator('.completion code')).toHaveCount(0);
+    await expect.poll(()=>server.child.exitCode).toBe(0);
+    expect(server.output()).toContain('Review concluded. No feedback recorded.');
+    expect(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('review-outbox-')))).toEqual([]);
+   } else {
+    await stop(server);
+    const output=execFileSync(binary,['--path',dir,'conclude'],{encoding:'utf8'}).trim();
+    expect(output).toBe('Review concluded. No feedback recorded.');
+   }
+   expect(readdirSync(dir).filter(n=>n.startsWith('.review') || n.startsWith('review-feedback-'))).toEqual([]);
+  } finally {await stop(server);}
+ });
+}

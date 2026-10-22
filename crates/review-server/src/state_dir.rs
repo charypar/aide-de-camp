@@ -80,7 +80,11 @@ impl StateDirectory {
         // process can then create .review without racing our recursive deletion.
         let retired = directory.join(format!(".review-cleanup-{}", uuid::Uuid::new_v4()));
         fs::rename(&path, &retired)?;
-        fs::remove_dir_all(&retired)
-            .with_context(|| format!("Feedback saved, but could not remove {}", retired.display()))
+        fs::remove_dir_all(&retired).with_context(|| {
+            format!(
+                "Review concluded, but could not remove {}",
+                retired.display()
+            )
+        })
     }
 }

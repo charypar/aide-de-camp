@@ -1,4 +1,4 @@
-use crate::dom::{id, window};
+use crate::dom::{focus, focus_without_scrolling, id, window};
 use leptos::prelude::*;
 use review_core::*;
 use std::{cell::RefCell, rc::Rc};
@@ -83,31 +83,120 @@ impl Context {
         let ui = self.ui.get_untracked();
         if self.disabled()
             || self.review.get_untracked().is_none_or(|r| r.busy)
-            || ui.chat_draft.trim().is_empty()
+            || ui.chat.draft.trim().is_empty()
         {
             return;
         }
         self.send(Command::Chat {
-            text: ui.chat_draft,
-            reference: ui.selection,
+            text: ui.chat.draft,
+            reference: ui.chat.reference,
         });
-        self.ui.update(|ui| ui.chat_draft.clear());
+        self.change(|ui| {
+            ui.chat.draft.clear();
+            ui.chat.paused = false;
+        });
+    }
+
+    pub fn add_feedback(self) {
+        let ui = self.ui.get_untracked();
+        let Some(reference) = ui.document.selection else {
+            return;
+        };
+        let id = id();
+        self.change(|ui| {
+            ui.feedback.drafts.insert(
+                id.clone(),
+                Feedback {
+                    id: id.clone(),
+                    text: String::new(),
+                    reference: Some(reference),
+                    category: FeedbackCategory::Change,
+                    prose_offset: ui.document.prose_offset,
+                    code_block: ui.document.code_block,
+                },
+            );
+            ui.feedback.focused = Some(id.clone());
+            ui.document.selection_actions = false;
+            ui.document.selection = None;
+            ui.document.code_anchor = None;
+            ui.document.prose_offset = None;
+            ui.document.code_block = None;
+        });
+        if let Ok(Some(selection)) = window().get_selection() {
+            let _ = selection.remove_all_ranges();
+        }
+        focus_without_scrolling(&format!("feedback-input-{id}"));
+    }
+
+    pub fn discuss_selection(self) {
+        self.change(|ui| {
+            ui.chat.reference = ui.document.selection.clone();
+            ui.chat.collapsed = false;
+            ui.document.selection_actions = false;
+        });
+        focus("chat-input");
     }
 
     pub fn record_feedback(self) {
         let ui = self.ui.get_untracked();
-        if self.disabled() || ui.feedback_draft.trim().is_empty() {
+        let Some(id) = ui.feedback.focused else {
+            return;
+        };
+        let Some(feedback) = ui.feedback.drafts.get(&id).cloned() else {
+            return;
+        };
+        if self.disabled() || feedback.text.trim().is_empty() {
             return;
         }
         self.send(Command::Feedback {
-            id: ui.editing_feedback.unwrap_or_else(id),
-            text: ui.feedback_draft,
-            reference: ui.selection,
+            id: id.clone(),
+            text: feedback.text,
+            reference: feedback.reference,
+            category: feedback.category,
+            prose_offset: feedback.prose_offset,
+            code_block: feedback.code_block,
         });
-        self.ui.update(|ui| {
-            ui.feedback_draft.clear();
-            ui.editing_feedback = None;
+        self.change(|ui| {
+            ui.feedback.drafts.remove(&id);
         });
+    }
+
+    pub fn discard_draft(self, id: &str) {
+        self.change(|ui| {
+            ui.feedback.drafts.remove(id);
+        });
+    }
+
+    pub fn delete_feedback(self, id: String) {
+        self.change(|ui| {
+            ui.feedback.drafts.remove(&id);
+            if ui.feedback.focused.as_ref() == Some(&id) {
+                ui.feedback.focused = None;
+            }
+        });
+        self.send(Command::DeleteFeedback { id });
+    }
+
+    pub fn comments(self) -> Vec<Feedback> {
+        self.review.track();
+        self.ui.track();
+        self.comments_untracked()
+    }
+
+    pub fn comments_untracked(self) -> Vec<Feedback> {
+        let mut comments = self
+            .review
+            .get_untracked()
+            .map(|r| r.feedback)
+            .unwrap_or_default();
+        for (id, draft) in self.ui.get_untracked().feedback.drafts {
+            if let Some(existing) = comments.iter_mut().find(|f| f.id == id) {
+                *existing = draft;
+            } else {
+                comments.push(draft);
+            }
+        }
+        comments
     }
 
     pub fn composer_key(self, event: web_sys::KeyboardEvent, feedback: bool) {
@@ -130,40 +219,31 @@ impl Context {
     }
 
     pub fn edit_feedback(self, feedback: Feedback) {
+        let id = feedback.id.clone();
         self.change(|ui| {
-            ui.editing_feedback = Some(feedback.id);
-            ui.feedback_draft = feedback.text;
-            ui.prose_offset = None;
-            ui.code_anchor = None;
-            ui.selection = feedback.reference;
+            ui.feedback.focused = Some(id.clone());
+            ui.feedback.drafts.entry(id.clone()).or_insert(feedback);
         });
+        focus_without_scrolling(&format!("feedback-input-{id}"));
     }
 
     pub fn clear_reference(self) {
-        if let Ok(Some(selection)) = window().get_selection() {
-            let _ = selection.remove_all_ranges();
-        }
-        self.change(|ui| {
-            ui.selection = None;
-            ui.prose_offset = None;
-            ui.code_anchor = None;
-        });
+        self.change(|ui| ui.chat.reference = None);
     }
 
     pub fn use_file_range(self) {
         let ui = self.ui.get_untracked();
-        let start = ui.manual_start.parse().unwrap_or(1);
+        let start = ui.chat.manual_start.parse().unwrap_or(1);
         let reference = Reference::Code {
-            file: ui.manual_file,
+            file: ui.chat.manual_file,
             start,
-            end: ui.manual_end.parse().unwrap_or(start),
-            side: ui.manual_side,
+            end: ui.chat.manual_end.parse().unwrap_or(start),
+            side: ui.chat.manual_side,
         };
         if let Some(review) = self.review.get_untracked() {
             match validate_reference(&reference, &review.workspace, &review.guide) {
                 Ok(()) => self.change(|ui| {
-                    ui.code_anchor = Some(reference.clone());
-                    ui.selection = Some(reference);
+                    ui.chat.reference = Some(reference);
                 }),
                 Err(error) => self.error.set(error),
             }

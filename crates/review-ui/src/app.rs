@@ -1,12 +1,6 @@
 use crate::{
-    chat::Conversation,
-    context::Context,
-    document_view::DocumentView,
-    dom::{document, save_detail},
-    feedback::FeedbackPanel,
-    prompts::AgentPrompt,
-    selection::highlight,
-    transport::connect,
+    annotations::highlight, chat::Conversation, context::Context, document_view::DocumentView,
+    dom::save_detail, feedback::OverallFeedback, prompts::AgentPrompt, transport::connect,
 };
 use leptos::prelude::*;
 use review_core::*;
@@ -23,68 +17,79 @@ pub(crate) fn App() -> impl IntoView {
         pending: StoredValue::new_local(Rc::new(RefCell::new(vec![]))),
     };
     connect(cx);
-    let selection = Memo::new(move |_| (cx.ui.get().selection, cx.ui.get().prose_offset));
+    let anchors = Memo::new(move |_| {
+        let ui = cx.ui.get();
+        (
+            ui.document.selection,
+            ui.document.prose_offset,
+            ui.document.code_block,
+            ui.document.selection_actions,
+            ui.chat.collapsed,
+            ui.feedback.overall_open,
+            ui.feedback.drafts,
+            cx.comments(),
+        )
+    });
     let guide = Memo::new(move |_| cx.review.get().map(|r| r.guide_html).unwrap_or_default());
     Effect::new(move || {
-        let _ = selection.get();
+        let _ = anchors.get();
         let _ = guide.get();
         gloo_timers::callback::Timeout::new(0, move || highlight(cx)).forget();
     });
-    let active_tab = Memo::new(move |_| cx.ui.get().tab);
-    Effect::new(move |_| {
-        let tab = active_tab.get();
-        gloo_timers::callback::Timeout::new(0, move || {
-            let ui = cx.ui.get_untracked();
-            let (id, scroll) = if tab == "feedback" {
-                ("feedback-panel", ui.feedback_scroll)
-            } else {
-                ("conversation", ui.chat_scroll)
-            };
-            if let Some(el) = document().get_element_by_id(id) {
-                el.set_scroll_top(scroll as i32);
-            }
-        })
-        .forget();
-    });
+    let resize = window_event_listener(leptos::ev::resize, move |_| crate::annotations::layout(cx));
+    on_cleanup(move || resize.remove());
 
-    let submit = move |_| cx.send(Command::Conclude);
     let dismiss = move |_| cx.error.set(String::new());
-    let show_chat = move |_| cx.change(|ui| ui.tab = "chat".into());
-    let show_feedback = move |_| cx.change(|ui| ui.tab = "feedback".into());
+    let toggle_chat = move |_| cx.change(|ui| ui.chat.collapsed = !ui.chat.collapsed);
+    let chat_label = move || {
+        if cx.ui.get().chat.collapsed {
+            "Show chat"
+        } else {
+            "Hide chat"
+        }
+    };
+    let show_requests = move |_| cx.change(|ui| ui.chat.collapsed = false);
     let toggle_activity = move |event| save_detail(cx, "activity", event);
     view! {
         <header class="topbar">
-            <div class="brand"><span class="brand-mark">"D"</span><strong>"DevDeck"</strong><span class="muted">"/ Review"</span></div>
+            <div class="brand">
+                <button class="chat-toggle" on:click=toggle_chat aria-label=chat_label title=chat_label aria-expanded=move || (!cx.ui.get().chat.collapsed).to_string() aria-controls="chat-panel">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+                </button>
+                <strong>"DevDeck"</strong><span class="muted">"/ Review"</span>
+            </div>
             <div class="top-actions">
                 <span class="connection" class:offline=move || !cx.connected.get()>{move || {
                     if cx.review.get().is_some_and(|r| r.status == ReviewStatus::Completed) { "Submitted" }
                     else if cx.connected.get() { "Connected" } else { "Reconnecting…" }
                 }}</span>
-                <button class="primary" on:click=submit disabled=move || cx.disabled() || cx.review.get().is_some_and(|r| r.busy)>"Submit review"</button>
+                <Show when=move || cx.ui.get().chat.collapsed && cx.review.get().is_some_and(|r| !r.requests.is_empty())>
+                    <button class="request-indicator" on:click=show_requests>"Codex needs your response"</button>
+                </Show>
             </div>
         </header>
-        {move || cx.review.get().and_then(|r| r.export_path).map(|path| view! {
-            <div class="completion" role="status"><strong>"Review submitted. Feedback saved to "</strong><code>{path}</code><p>"The review command has finished. You can close this tab."</p></div>
+        {move || cx.review.get().filter(|r| r.status == ReviewStatus::Completed).map(|review| {
+            let message = if review.export_path.is_some() { "Review submitted. Feedback saved to " } else { NO_FEEDBACK_MESSAGE };
+            view! {
+                <div class="completion" role="status"><strong>{message}</strong>{review.export_path.map(|path| view! { <code>{path}</code> })}<p>"The review command has finished. You can close this tab."</p></div>
+            }
         })}
         <Show when=move || !cx.error.get().is_empty()>
             <div class="banner error" role="alert">{move || cx.error.get()}<button on:click=dismiss>"Dismiss"</button></div>
         </Show>
         <Show when=move || cx.review.get().is_some() fallback=|| view! { <div class="loading">"Connecting to your review…"</div> }>
-            <div class="workspace">
+            <div class="workspace" class:chat-collapsed=move || cx.ui.get().chat.collapsed>
                 <DocumentView cx=cx/>
-                <aside>
+                <Show when=move || !cx.ui.get().chat.collapsed>
+                <aside id="chat-panel" class="chat-panel" aria-label="Agent conversation">
                     <Show when=move || cx.review.get().is_some_and(|r| !r.requests.is_empty())>
                         <section class="pending-requests" aria-label="Pending Codex requests" aria-live="polite">
                             <For each=move || cx.review.get().map(|r| r.requests).unwrap_or_default()
                                 key=|request| request.id.to_string() children=move |request| view! { <AgentPrompt cx=cx request=request/> }/>
                         </section>
                     </Show>
-                    <nav class="tabs">
-                        <button class:active=move || cx.ui.get().tab != "feedback" on:click=show_chat>"Conversation"</button>
-                        <button class:active=move || cx.ui.get().tab == "feedback" on:click=show_feedback>{move || format!("Feedback ({})", cx.review.get().map(|r| r.feedback.len()).unwrap_or(0))}</button>
-                    </nav>
-                    <Show when=move || cx.ui.get().tab != "feedback"><Conversation cx=cx/></Show>
-                    <Show when=move || cx.ui.get().tab == "feedback"><FeedbackPanel cx=cx/></Show>
+                    <div class="chat-heading">"Conversation"</div>
+                    <Conversation cx=cx/>
                     <div class="agent-controls">
                         <details open=move || cx.ui.get().details.get("activity").copied().unwrap_or(false) on:toggle=toggle_activity>
                             <summary>"Codex activity"</summary>
@@ -92,7 +97,9 @@ pub(crate) fn App() -> impl IntoView {
                         </details>
                     </div>
                 </aside>
+                </Show>
             </div>
+            <OverallFeedback cx=cx/>
         </Show>
     }
 }

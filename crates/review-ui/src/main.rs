@@ -1,3 +1,4 @@
+mod annotations;
 mod app;
 mod chat;
 mod context;

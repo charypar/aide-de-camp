@@ -17,9 +17,10 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     emit({id:'prepare-approval',method:mcp ? 'mcpServer/elicitation/request' : 'item/commandExecution/requestApproval',params});
   } else if (!method && id === 'prepare-approval') {
     const accepted=message.result.decision === 'accept' || message.result.action === 'accept';
-    const guide=process.env.REVIEW_TEST_APPROVAL === 'diff'
+    let guide=process.env.REVIEW_TEST_APPROVAL === 'diff'
       ? '# Fix addition\n\nReplace subtraction while preserving the surrounding function.\n\n```rust {"file":"calculator.rs","diff":true}\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 {\n-    a - b\n+    a + b\n }\n```\n'
       : '# Approved walkthrough\n\nPrepared after your approval.\n\n```rust {"file":"calculator.rs","start":1}\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n```\n';
+    if (process.env.REVIEW_TEST_APPROVAL === 'repeated-code') guide += '\n## A second look\n\n' + guide.slice(guide.indexOf('```rust'));
     if (accepted) event('item/completed',{threadId:'test-thread',item:{id:'guide',type:'agentMessage',phase:'final_answer',text:guide}});
     event('turn/completed',{threadId:'test-thread',turn:{status:accepted ? 'completed' : 'interrupted'}});
   } else if (method === 'turn/interrupt') {

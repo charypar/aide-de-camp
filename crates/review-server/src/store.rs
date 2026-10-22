@@ -161,6 +161,11 @@ impl Store {
         if self.review.busy {
             bail!("Stop the active Codex turn before concluding");
         }
+        if !self.review.has_feedback() {
+            self.review.status = ReviewStatus::Completed;
+            self.review.export_path = None;
+            return Ok(());
+        }
         let path = Path::new(&self.review.directory)
             .join(format!("review-feedback-{}.md", self.review.id));
         let content = export_markdown(&self.review);
@@ -192,14 +197,12 @@ impl Store {
     }
 
     pub fn cleanup(&mut self) -> Result<()> {
-        if self.review.status != ReviewStatus::Completed
-            || !self
-                .review
-                .export_path
-                .as_ref()
-                .is_some_and(|path| Path::new(path).is_file())
-        {
-            bail!("Cannot remove review state before feedback has been exported");
+        let ready = match &self.review.export_path {
+            Some(path) => Path::new(path).is_file(),
+            None => !self.review.has_feedback(),
+        };
+        if self.review.status != ReviewStatus::Completed || !ready {
+            bail!("Cannot remove review state before conclusion has finished");
         }
         // Close SQLite before unlinking its files, even while server tasks still hold App references.
         let db = std::mem::replace(&mut self.db, Connection::open_in_memory()?);
@@ -225,17 +228,37 @@ mod tests {
     fn restart_restores_drafts_feedback_and_interruptions() {
         let t = tempfile::tempdir().unwrap();
         let mut s = Store::open(t.path(), w("a")).unwrap();
-        s.review.ui.chat_draft = "unfinished".into();
+        s.review.ui.chat.draft = "unfinished".into();
         s.review.feedback.push(Feedback {
             id: "f".into(),
+            category: FeedbackCategory::Change,
+            prose_offset: None,
+            code_block: None,
             reference: None,
             text: "Keep my words\nexactly".into(),
         });
+        s.review.ui.feedback.overall = "Overall assessment".into();
+        s.review.ui.chat.collapsed = true;
+        s.review.ui.feedback.overall_open = true;
+        s.review.ui.feedback.drafts.insert(
+            "draft".into(),
+            Feedback {
+                id: "draft".into(),
+                text: "Unfinished question".into(),
+                category: FeedbackCategory::Question,
+                prose_offset: Some(42),
+                code_block: None,
+                reference: Some(Reference::Prose {
+                    quote: "Repeated passage".into(),
+                }),
+            },
+        );
+        let expected_ui = s.review.ui.clone();
         s.review.busy = true;
         s.save("test", None).unwrap();
         drop(s);
         let s = Store::open(t.path(), w("a")).unwrap();
-        assert_eq!(s.review.ui.chat_draft, "unfinished");
+        assert_eq!(s.review.ui, expected_ui);
         assert!(!s.review.busy);
         assert!(s.review.error.is_some());
         assert_eq!(s.review.feedback.len(), 1);
@@ -247,6 +270,9 @@ mod tests {
         let old = s.review.id.clone();
         s.review.feedback.push(Feedback {
             id: "f".into(),
+            category: FeedbackCategory::Change,
+            prose_offset: None,
+            code_block: None,
             reference: None,
             text: "literal **words**".into(),
         });
@@ -293,6 +319,7 @@ mod tests {
         assert!(store.cleanup().is_err());
         assert!(StateDirectory::database(temp.path()).is_file());
 
+        store.review.ui.feedback.overall = "Keep this assessment".into();
         let unrelated = temp.path().join("review.sqlite.backup");
         std::fs::write(&unrelated, "keep").unwrap();
         std::fs::create_dir(StateDirectory::path(temp.path()).join("diagrams")).unwrap();
@@ -314,10 +341,50 @@ mod tests {
     fn missing_export_prevents_cleanup_of_completed_state() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = Store::open(temp.path(), w("missing")).unwrap();
+        store.review.ui.feedback.overall = "Keep this assessment".into();
         store.conclude().unwrap();
         std::fs::remove_file(store.review.export_path.as_ref().unwrap()).unwrap();
         assert!(store.cleanup().is_err());
         assert!(StateDirectory::database(temp.path()).is_file());
+    }
+
+    #[test]
+    fn empty_conclusion_ignores_drafts_and_cleans_without_an_export() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::open(temp.path(), w("empty")).unwrap();
+        store.review.ui.feedback.overall = " \n\t".into();
+        store.review.ui.feedback.drafts.insert(
+            "draft".into(),
+            Feedback {
+                id: "draft".into(),
+                text: "Not recorded".into(),
+                reference: None,
+                category: FeedbackCategory::Change,
+                prose_offset: None,
+                code_block: None,
+            },
+        );
+        let existing = temp
+            .path()
+            .join(format!("review-feedback-{}.md", store.review.id));
+        std::fs::write(&existing, "An unrelated existing file").unwrap();
+        store.conclude().unwrap();
+        store.conclude().unwrap();
+        assert_eq!(store.review.status, ReviewStatus::Completed);
+        assert!(store.review.export_path.is_none());
+        store.save("complete", None).unwrap();
+        drop(store);
+
+        let mut store = Store::existing(temp.path()).unwrap();
+        assert_eq!(store.review.status, ReviewStatus::Completed);
+        assert!(store.review.export_path.is_none());
+        store.cleanup().unwrap();
+        assert!(!StateDirectory::path(temp.path()).exists());
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_to_string(existing).unwrap(),
+            "An unrelated existing file"
+        );
     }
 
     #[test]

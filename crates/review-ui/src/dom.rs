@@ -33,3 +33,26 @@ pub(crate) fn save_detail(cx: Context, key: &str, event: web_sys::Event) {
         }
     }
 }
+
+pub(crate) fn focus(id: &str) {
+    focus_target(id, false);
+}
+
+pub(crate) fn focus_without_scrolling(id: &str) {
+    focus_target(id, true);
+}
+
+fn focus_target(id: &str, prevent_scroll: bool) {
+    let id = id.to_owned();
+    gloo_timers::callback::Timeout::new(0, move || {
+        if let Some(element) = document()
+            .get_element_by_id(&id)
+            .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let options = web_sys::FocusOptions::new();
+            options.set_prevent_scroll(prevent_scroll);
+            let _ = element.focus_with_options(&options);
+        }
+    })
+    .forget();
+}

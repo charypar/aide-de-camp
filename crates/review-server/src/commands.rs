@@ -31,6 +31,9 @@ pub(crate) async fn handle(app: &Shared, c: Envelope) -> Result<()> {
         Command::SaveUi { ui } => s.review.ui = *ui.clone(),
         Command::Feedback {
             id,
+            category,
+            prose_offset,
+            code_block,
             text,
             reference,
         } => {
@@ -43,6 +46,9 @@ pub(crate) async fn handle(app: &Shared, c: Envelope) -> Result<()> {
             }
             let f = Feedback {
                 id: id.clone(),
+                category: *category,
+                prose_offset: *prose_offset,
+                code_block: *code_block,
                 text: text.clone(),
                 reference: reference.clone(),
             };
@@ -51,10 +57,12 @@ pub(crate) async fn handle(app: &Shared, c: Envelope) -> Result<()> {
             } else {
                 s.review.feedback.push(f);
             }
-            s.review.ui.feedback_draft.clear();
-            s.review.ui.editing_feedback = None;
+            s.review.ui.feedback.drafts.remove(id);
         }
-        Command::DeleteFeedback { id } => s.review.feedback.retain(|f| &f.id != id),
+        Command::DeleteFeedback { id } => {
+            s.review.feedback.retain(|f| &f.id != id);
+            s.review.ui.feedback.drafts.remove(id);
+        }
         Command::Chat { text, reference } => {
             if s.review.busy {
                 bail!("Codex is still working; stop it or wait before sending");
@@ -73,7 +81,7 @@ pub(crate) async fn handle(app: &Shared, c: Envelope) -> Result<()> {
                 reference: reference.clone(),
                 status: MessageStatus::Complete,
             });
-            s.review.ui.chat_draft.clear();
+            s.review.ui.chat.draft.clear();
             launch = Some(Some(format!(
                 "{}{}",
                 text,

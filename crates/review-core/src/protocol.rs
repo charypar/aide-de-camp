@@ -1,4 +1,4 @@
-use crate::{Reference, Review, UiState};
+use crate::{FeedbackCategory, Reference, Review, UiState};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -19,6 +19,9 @@ pub enum Command {
     },
     Feedback {
         id: String,
+        category: FeedbackCategory,
+        prose_offset: Option<u32>,
+        code_block: Option<u32>,
         text: String,
         reference: Option<Reference>,
     },

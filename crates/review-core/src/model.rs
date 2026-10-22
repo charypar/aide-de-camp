@@ -1,30 +1,79 @@
 use crate::{DiffSide, MessageRole, MessageStatus, Reference, ReviewStatus};
 use serde::{Deserialize, Serialize};
 
+pub const NO_FEEDBACK_MESSAGE: &str = "Review concluded. No feedback recorded.";
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct UiState {
-    pub chat_draft: String,
-    pub feedback_draft: String,
-    pub editing_feedback: Option<String>,
-    pub selection: Option<Reference>,
-    pub code_anchor: Option<Reference>,
-    pub prose_offset: Option<u32>,
-    pub scroll: f64,
-    pub chat_scroll: f64,
-    pub feedback_scroll: f64,
+    pub chat: ChatUiState,
+    pub document: DocumentUiState,
+    pub feedback: FeedbackUiState,
     pub details: std::collections::BTreeMap<String, bool>,
-    pub horizontal_scroll: std::collections::BTreeMap<String, i32>,
-    pub tab: String,
+    pub request_drafts: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ChatUiState {
+    pub draft: String,
+    pub reference: Option<Reference>,
+    pub collapsed: bool,
+    pub paused: bool,
+    pub scroll: f64,
     pub manual_file: String,
     pub manual_start: String,
     pub manual_end: String,
     pub manual_side: DiffSide,
-    pub request_drafts: std::collections::BTreeMap<String, String>,
 }
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct DocumentUiState {
+    pub selection: Option<Reference>,
+    pub selection_actions: bool,
+    pub code_anchor: Option<Reference>,
+    pub prose_offset: Option<u32>,
+    pub code_block: Option<u32>,
+    pub scroll: f64,
+    pub horizontal_scroll: std::collections::BTreeMap<String, i32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct FeedbackUiState {
+    pub overall: String,
+    pub overall_open: bool,
+    pub drafts: std::collections::BTreeMap<String, Feedback>,
+    pub focused: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedbackCategory {
+    #[default]
+    Change,
+    Question,
+}
+
+impl FeedbackCategory {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Change => "Change",
+            Self::Question => "Question",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Feedback {
     pub id: String,
+    #[serde(default)]
+    pub category: FeedbackCategory,
+    #[serde(default)]
+    pub prose_offset: Option<u32>,
+    #[serde(default)]
+    pub code_block: Option<u32>,
     pub reference: Option<Reference>,
     pub text: String,
 }
@@ -81,6 +130,10 @@ pub struct Review {
 }
 
 impl Review {
+    pub fn has_feedback(&self) -> bool {
+        !self.ui.feedback.overall.trim().is_empty() || !self.feedback.is_empty()
+    }
+
     /// Wall time for this preparation attempt, including time waiting for a response.
     pub fn preparation_elapsed(&self, now_ms: u64) -> Option<String> {
         let seconds = now_ms.saturating_sub(self.preparation_started_at_ms?) / 1000;

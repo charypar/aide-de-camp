@@ -9,131 +9,13 @@ use web_sys::Element;
 
 pub(crate) fn restore(cx: Context) {
     let ui = cx.ui.get_untracked();
-    if let Some(el) = document().get_element_by_id("feedback-panel") {
-        el.set_scroll_top(ui.feedback_scroll as i32);
-    }
     if let Some(el) = document().get_element_by_id("reading") {
-        el.set_scroll_top(ui.scroll as i32);
+        el.set_scroll_top(ui.document.scroll as i32);
     }
     if let Some(el) = document().get_element_by_id("conversation") {
-        el.set_scroll_top(ui.chat_scroll as i32);
+        el.set_scroll_top(ui.chat.scroll as i32);
     }
-    highlight(cx);
-}
-
-pub(crate) fn highlight(cx: Context) {
-    let ui = cx.ui.get_untracked();
-    let reference = ui.selection;
-    ProseHighlight::update(reference.as_ref(), ui.prose_offset);
-    if let Ok(nodes) = document().query_selector_all(".code-line") {
-        for i in 0..nodes.length() {
-            let el = nodes.item(i).unwrap().dyn_into::<Element>().unwrap();
-            let active = if let Some(Reference::Code {
-                file,
-                start,
-                end,
-                side,
-            }) = &reference
-            {
-                let line = el
-                    .get_attribute(&format!("data-{}-line", side.as_str()))
-                    .filter(|number| !number.is_empty())
-                    .or_else(|| {
-                        (el.get_attribute("data-side").as_deref() == Some(side.as_str()))
-                            .then(|| el.get_attribute("data-line"))
-                            .flatten()
-                    })
-                    .and_then(|number| number.parse::<u32>().ok())
-                    .unwrap_or(0);
-                el.get_attribute("data-file").as_ref() == Some(file)
-                    && line >= *start
-                    && line <= *end
-            } else {
-                false
-            };
-            let _ = el.set_attribute("data-selected", if active { "true" } else { "false" });
-        }
-    }
-}
-/// Keep prose highlighted independently of the browser selection and input focus.
-struct ProseHighlight;
-
-impl ProseHighlight {
-    fn update(reference: Option<&Reference>, offset: Option<u32>) {
-        let _ = Self::paint(reference, offset);
-    }
-
-    fn paint(reference: Option<&Reference>, offset: Option<u32>) -> Option<()> {
-        use js_sys::{Function, Reflect};
-        use wasm_bindgen::JsValue;
-
-        // A narrow binding avoids enabling all of web-sys's unstable APIs.
-        let css = Reflect::get(&window(), &JsValue::from_str("CSS")).ok()?;
-        let registry = Reflect::get(&css, &JsValue::from_str("highlights")).ok()?;
-        let delete = Reflect::get(&registry, &JsValue::from_str("delete"))
-            .ok()?
-            .dyn_into::<Function>()
-            .ok()?;
-        let name = JsValue::from_str("review-reference");
-        delete.call1(&registry, &name).ok()?;
-
-        let Some(Reference::Prose { quote }) = reference else {
-            return Some(());
-        };
-        let root = document().get_element_by_id("guide")?;
-        let text = root.text_content()?;
-        let units: Vec<u16> = text.encode_utf16().collect();
-        let quote_units: Vec<u16> = quote.encode_utf16().collect();
-        if quote_units.is_empty() {
-            return None;
-        }
-        let start = offset
-            .map(|n| n as usize)
-            .filter(|start| {
-                units.get(*start..*start + quote_units.len()) == Some(quote_units.as_slice())
-            })
-            .or_else(|| {
-                units
-                    .windows(quote_units.len())
-                    .position(|part| part == quote_units)
-            })?;
-        let end = start + quote_units.len();
-
-        let walker = document()
-            .create_tree_walker_with_what_to_show(&root, 4)
-            .ok()?;
-        let range = document().create_range().ok()?;
-        let mut position = 0;
-        while let Ok(Some(node)) = walker.next_node() {
-            let length = node
-                .text_content()
-                .unwrap_or_default()
-                .encode_utf16()
-                .count();
-            if position <= start && start < position + length {
-                range.set_start(&node, (start - position) as u32).ok()?;
-            }
-            if position < end && end <= position + length {
-                range.set_end(&node, (end - position) as u32).ok()?;
-                break;
-            }
-            position += length;
-        }
-
-        let constructor = Reflect::get(&window(), &JsValue::from_str("Highlight"))
-            .ok()?
-            .dyn_into::<Function>()
-            .ok()?;
-        let ranges = js_sys::Array::new();
-        ranges.push(&range);
-        let highlight = Reflect::construct(&constructor, &ranges).ok()?;
-        let set = Reflect::get(&registry, &JsValue::from_str("set"))
-            .ok()?
-            .dyn_into::<Function>()
-            .ok()?;
-        set.call2(&registry, &name, &highlight).ok()?;
-        Some(())
-    }
+    crate::annotations::highlight(cx);
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +23,7 @@ struct CodePoint {
     file: String,
     line: u32,
     side: DiffSide,
+    block: u32,
 }
 
 impl CodePoint {
@@ -160,16 +43,19 @@ impl CodePoint {
             file: row.get_attribute("data-file")?,
             line: line.parse().ok()?,
             side,
+            block: crate::annotations::block_index(&row)?,
         })
     }
 
     fn reference(&self, other: &Self) -> Option<Reference> {
-        (self.file == other.file && self.side == other.side).then(|| Reference::Code {
-            file: self.file.clone(),
-            start: self.line.min(other.line),
-            end: self.line.max(other.line),
-            side: self.side,
-        })
+        (self.file == other.file && self.side == other.side && self.block == other.block).then(
+            || Reference::Code {
+                file: self.file.clone(),
+                start: self.line.min(other.line),
+                end: self.line.max(other.line),
+                side: self.side,
+            },
+        )
     }
 }
 
@@ -208,14 +94,19 @@ impl SelectionController {
                 let _ = selection.remove_all_ranges();
             }
             self.cx.change(|ui| {
-                ui.selection = Some(reference);
-                ui.prose_offset = None;
-                ui.code_anchor = None;
+                ui.document.selection = Some(reference);
+                ui.document.selection_actions = true;
+                ui.document.prose_offset = None;
+                ui.document.code_anchor = None;
+                ui.document.code_block = event
+                    .target()
+                    .and_then(|t| t.dyn_into::<Element>().ok())
+                    .and_then(|el| crate::annotations::block_index(&el));
             });
             return;
         }
         let preferred = if event.shift_key() {
-            match self.cx.ui.get_untracked().code_anchor {
+            match self.cx.ui.get_untracked().document.code_anchor {
                 Some(Reference::Code { side, .. }) => Some(side),
                 _ => None,
             }
@@ -231,23 +122,31 @@ impl SelectionController {
         }
 
         let anchor = if event.shift_key() {
-            match self.cx.ui.get_untracked().code_anchor {
+            match self.cx.ui.get_untracked().document.code_anchor {
                 Some(Reference::Code {
                     file, start, side, ..
-                }) if file == point.file && side == point.side => CodePoint {
-                    file,
-                    line: start,
-                    side,
-                },
+                }) if file == point.file
+                    && side == point.side
+                    && self.cx.ui.get_untracked().document.code_block == Some(point.block) =>
+                {
+                    CodePoint {
+                        file,
+                        line: start,
+                        side,
+                        block: point.block,
+                    }
+                }
                 _ => point.clone(),
             }
         } else {
             point.clone()
         };
         self.cx.ui.update(|ui| {
-            ui.code_anchor = anchor.reference(&anchor);
-            ui.selection = anchor.reference(&point);
-            ui.prose_offset = None;
+            ui.document.code_anchor = anchor.reference(&anchor);
+            ui.document.code_block = Some(point.block);
+            ui.document.selection = anchor.reference(&point);
+            ui.document.selection_actions = false;
+            ui.document.prose_offset = None;
         });
         self.drag.set_value(Some(anchor));
     }
@@ -264,12 +163,28 @@ impl SelectionController {
             return;
         };
         if let Some(reference) = anchor.reference(&point) {
-            self.cx.ui.update(|ui| ui.selection = Some(reference));
+            self.cx
+                .ui
+                .update(|ui| ui.document.selection = Some(reference));
         }
     }
 
     pub fn pointer_up(self, event: web_sys::MouseEvent) {
         if self.drag.get_value().is_some() {
+            if !event.shift_key()
+                && self
+                    .cx
+                    .ui
+                    .get_untracked()
+                    .document
+                    .selection
+                    .as_ref()
+                    .is_some_and(
+                        |r| matches!(r, Reference::Code { start, end, .. } if start == end),
+                    )
+            {
+                crate::annotations::focus_at(self.cx, &event);
+            }
             self.finish_drag();
             return;
         }
@@ -293,17 +208,36 @@ impl SelectionController {
             return;
         };
         let Some(range) = selection.get_range_at(0).ok() else {
+            crate::annotations::focus_at(self.cx, &event);
             self.clear();
             return;
         };
         let Some(root) = document().get_element_by_id("guide") else {
             return;
         };
+        // Triple-clicking a paragraph at a prose/code boundary can extend the DOM
+        // range into the next, unselectable code header. Keep only the visible text.
+        if let Ok(start) = range.start_container()
+            && let Some(prose) = start
+                .parent_element()
+                .and_then(|el| el.closest(".prose").ok().flatten())
+            && !prose.contains(range.end_container().ok().as_ref())
+        {
+            let clipped = range.clone_range();
+            let _ = clipped.set_end(&prose, prose.child_nodes().length());
+            let normalize = |text: String| text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if normalize(clipped.to_string().as_string().unwrap_or_default())
+                == normalize(selection.to_string().as_string().unwrap_or_default())
+            {
+                let _ = range.set_end(&prose, prose.child_nodes().length());
+            }
+        }
         // Range text preserves DOM offsets across paragraph boundaries and inline markup.
         // Browser Selection text can add layout newlines that aren't actual text nodes.
         let text = range.to_string().as_string().unwrap_or_default();
         let quote = text.trim().to_owned();
         if quote.is_empty() {
+            crate::annotations::focus_at(self.cx, &event);
             self.clear();
             return;
         }
@@ -316,6 +250,7 @@ impl SelectionController {
         if self.cx.review.get_untracked().is_none_or(|review| {
             validate_reference(&reference, &review.workspace, &review.guide).is_err()
         }) {
+            crate::annotations::focus_at(self.cx, &event);
             self.clear();
             return;
         }
@@ -336,24 +271,28 @@ impl SelectionController {
                 .encode_utf16()
                 .count();
         self.cx.change(|ui| {
-            ui.selection = Some(Reference::Prose { quote });
-            ui.prose_offset = Some(offset as u32);
-            ui.code_anchor = None;
+            ui.document.selection = Some(Reference::Prose { quote });
+            ui.document.selection_actions = true;
+            ui.document.prose_offset = Some(offset as u32);
+            ui.document.code_block = None;
+            ui.document.code_anchor = None;
         });
     }
 
     pub fn finish_drag(self) {
         if self.drag.get_value().is_some() {
             self.drag.set_value(None);
-            self.cx.save();
+            self.cx.change(|ui| ui.document.selection_actions = true);
         }
     }
 
     fn clear(self) {
         self.cx.change(|ui| {
-            ui.selection = None;
-            ui.prose_offset = None;
-            ui.code_anchor = None;
+            ui.document.selection = None;
+            ui.document.code_block = None;
+            ui.document.selection_actions = false;
+            ui.document.prose_offset = None;
+            ui.document.code_anchor = None;
         });
     }
 }

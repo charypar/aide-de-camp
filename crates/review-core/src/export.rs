@@ -1,43 +1,50 @@
-use crate::{Feedback, Reference, Review};
+use crate::{Feedback, FeedbackCategory, Reference, Review};
 
 pub fn export_markdown(review: &Review) -> String {
-    export_feedback(&review.feedback)
+    export_feedback(&review.ui.feedback.overall, &review.feedback)
 }
 
-fn export_feedback(feedback: &[Feedback]) -> String {
+fn export_feedback(overall: &str, feedback: &[Feedback]) -> String {
     let mut out = String::new();
-    let overall: Vec<_> = feedback.iter().filter(|f| f.reference.is_none()).collect();
-    if !overall.is_empty() {
+    if !overall.trim().is_empty() {
         out.push_str("# Overall feedback\n\n");
-        for feedback in overall {
+        out.push_str(overall);
+        out.push_str("\n\n");
+    }
+    for (category, heading, intent) in [
+        (
+            FeedbackCategory::Change,
+            "Changes",
+            "Requested changes to implement.",
+        ),
+        (
+            FeedbackCategory::Question,
+            "Questions",
+            "Questions to answer and discuss or plan; do not implement without a decision.",
+        ),
+    ] {
+        let comments: Vec<_> = feedback.iter().filter(|f| f.category == category).collect();
+        if comments.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("# {heading}\n\n{intent}\n\n"));
+        for feedback in comments {
+            match &feedback.reference {
+                Some(reference @ Reference::Code { .. }) => {
+                    out.push_str(&format!("## {}\n\n", reference.label()));
+                }
+                Some(Reference::Prose { quote }) => {
+                    out.push_str("## Guide feedback\n\n");
+                    for line in quote.lines() {
+                        out.push_str(&format!("> {line}\n"));
+                    }
+                    out.push('\n');
+                }
+                None => {}
+            }
             out.push_str(&feedback.text);
             out.push_str("\n\n");
         }
-    }
-    let comments: Vec<_> = feedback.iter().filter(|f| f.reference.is_some()).collect();
-    if !comments.is_empty() {
-        out.push_str("# Detailed feedback\n\n");
-    }
-    for feedback in comments {
-        match &feedback.reference {
-            Some(Reference::Code { .. }) => out.push_str(&format!(
-                "## {}\n\n",
-                feedback.reference.as_ref().unwrap().label()
-            )),
-            Some(Reference::Prose { quote }) => {
-                out.push_str("## Guide feedback\n\n");
-                for line in quote.lines() {
-                    out.push_str(&format!("> {line}\n"));
-                }
-                out.push('\n');
-            }
-            None => unreachable!("Only referenced comments are included here"),
-        }
-        out.push_str(&feedback.text);
-        out.push_str("\n\n");
-    }
-    if out.is_empty() {
-        out.push_str("# Review feedback\n\nNo feedback recorded.\n");
     }
     out
 }
@@ -47,59 +54,54 @@ mod tests {
     use super::*;
     use crate::DiffSide;
 
-    fn comment(text: &str, reference: Option<Reference>) -> Feedback {
-        Feedback {
-            id: text.into(),
-            text: text.into(),
-            reference,
-        }
-    }
-
     #[test]
-    fn groups_overall_comments_before_references_without_rewriting_them() {
+    fn separates_intent_and_preserves_wording_references_and_order() {
+        let code = Some(Reference::Code {
+            file: "src/main.rs".into(),
+            start: 2,
+            end: 4,
+            side: DiffSide::New,
+        });
         let feedback = vec![
-            comment(
-                "Code comment",
-                Some(Reference::Code {
-                    file: "src/main.rs".into(),
-                    start: 2,
-                    end: 4,
-                    side: DiffSide::New,
-                }),
-            ),
-            comment("First overall\n**Keep my formatting**", None),
-            comment(
-                "Prose comment",
-                Some(Reference::Prose {
+            Feedback {
+                id: "q".into(),
+                category: FeedbackCategory::Question,
+                prose_offset: Some(0),
+                code_block: None,
+                reference: Some(Reference::Prose {
                     quote: "Line one\nLine two".into(),
                 }),
-            ),
-            comment("Second overall", None),
+                text: "Why this approach?".into(),
+            },
+            Feedback {
+                id: "c".into(),
+                category: FeedbackCategory::Change,
+                prose_offset: None,
+                code_block: None,
+                reference: code.clone(),
+                text: "Keep **my words**\nexactly.".into(),
+            },
+            Feedback {
+                id: "c2".into(),
+                category: FeedbackCategory::Change,
+                prose_offset: None,
+                code_block: None,
+                reference: code,
+                text: "Second change".into(),
+            },
         ];
         assert_eq!(
-            export_feedback(&feedback),
-            "# Overall feedback\n\nFirst overall\n**Keep my formatting**\n\nSecond overall\n\n# Detailed feedback\n\n## src/main.rs:2-4 (new)\n\nCode comment\n\n## Guide feedback\n\n> Line one\n> Line two\n\nProse comment\n\n"
+            export_feedback("Overall assessment", &feedback),
+            "# Overall feedback\n\nOverall assessment\n\n# Changes\n\nRequested changes to implement.\n\n## src/main.rs:2-4 (new)\n\nKeep **my words**\nexactly.\n\n## src/main.rs:2-4 (new)\n\nSecond change\n\n# Questions\n\nQuestions to answer and discuss or plan; do not implement without a decision.\n\n## Guide feedback\n\n> Line one\n> Line two\n\nWhy this approach?\n\n"
         );
     }
 
     #[test]
     fn omits_empty_sections() {
         assert_eq!(
-            export_feedback(&[comment("Looks good", None)]),
+            export_feedback("Looks good", &[]),
             "# Overall feedback\n\nLooks good\n\n"
         );
-        assert!(
-            !export_feedback(&[comment(
-                "Explain",
-                Some(Reference::Prose {
-                    quote: "Why".into()
-                })
-            )])
-            .contains("Overall feedback")
-        );
-        assert_eq!(
-            export_feedback(&[]),
-            "# Review feedback\n\nNo feedback recorded.\n"
-        );
+        assert_eq!(export_feedback("  ", &[]), "");
     }
 }

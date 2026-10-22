@@ -1,5 +1,41 @@
 # Guided review — product plan
 
+## Empty conclusion and editor refinements — 2026-10-22
+
+Feedback from `review-feedback-0c8b7c7f-a6c5-4af3-b1a6-258ecfb306b8.md` and the follow-up instruction:
+
+- Restore the white background inside inline feedback editors while retaining the flat, wide margin layout.
+- Adding or editing inline feedback focuses its text field without scrolling the reading pane. Preserve the reading position on reload.
+- If there are no recorded inline comments and overall feedback is empty or whitespace, conclude with “Review concluded. No feedback recorded.” in the browser and terminal. Complete normal state cleanup without creating an export file. Unrecorded inline drafts do not count as feedback. Existing unrelated files remain untouched.
+
+Verification: 31 Rust tests and 24 headless browser tests pass, along with formatting and Clippy. Coverage includes editor focus and reading-position restoration, browser and CLI empty conclusion, and cleanup without an export. Headless Playwright MCP independently checked the white editor, unchanged reading position, completion message, and state-folder cleanup. Native Codex integration is unchanged and was not rerun.
+
+## Margin and state refinements — 2026-10-22
+
+Feedback from `review-feedback-4963cc72-342d-4b62-8732-1c068e6bc380.md`:
+
+- Replace the decorative D mark with an accessible chat-panel toggle beside the DevDeck name. Keep pending agent requests visible in the header.
+- Give inline feedback a wider right margin that reaches the page edge. Comments and their composers fill that margin with flat backgrounds, without card borders, rounded corners, shadows, or outer horizontal gutters. Retain vertical anchoring and overlap handling.
+- Group `UiState` into chat, document, and feedback state. Keep shared disclosure state and native request drafts at the top level. This is an internal organisation change; resume behavior remains the same, and no legacy-state migration is added during development.
+
+Verification: 30 Rust tests and 21 headless browser tests pass, along with formatting and Clippy. Coverage includes flat, full-margin editor geometry with chat open/collapsed, toggle placement, and persistence through the grouped UI state. Headless Playwright MCP also checked the layout, draft restoration, submission, and state-folder cleanup. Native Codex integration is unchanged and was not rerun.
+
+## UX revision — 2026-10-21
+
+This UX revision separates conversation from feedback. It supersedes the earlier shared conversation/feedback panel and automatic chat reference on selection.
+
+- Selecting guide prose or code reveals two small actions: add feedback, or discuss with the agent. Add feedback opens an attached comment in editing mode in the document's right margin. Discuss sets the chat reference, opens chat if collapsed, and focuses its composer.
+- Feedback comments remain attached to their document selections. Their highlights persist for the lifetime of the comments, independently of the active selection or chat reference.
+- Chat becomes independently collapsible. Feedback no longer lives in a chat-panel tab.
+- Every inline feedback comment has a Changes/Questions toggle. After an optional Overall feedback section, the Markdown handover groups inline feedback into two top-level sections: changes to implement, and questions to answer or discuss/plan. Preserve user wording, source references, and guide quotes; retain export without an AI pass.
+- Overall feedback is one uncategorised, autosaved text field in a collapsible bottom drawer, alongside the submit-review action. This follows the GitHub PR review shape.
+- Chat follows incoming streamed text while at the bottom, pauses when the user scrolls up to read history, and offers a jump back to the latest message.
+- Continue persisting drafts, comment anchors, categories, and panel/drawer state across interruption. Pending native approval/input requests must remain discoverable when chat is collapsed.
+
+The other proposed defaults are accepted: Discuss explicitly opens and focuses chat; clicking a saved highlight focuses its margin comment; deleting feedback removes its highlight. Selection alone does not change chat context. Draft inline comments are persisted but only recorded comments enter the handover.
+
+Implemented and verified: 30 Rust tests and 20 headless browser tests pass, along with formatting and Clippy. Coverage includes independent selection/chat context, comment categories and grouped export, one autosaved overall field, collapsed-panel restoration, multiple inline drafts, overlapping comments, exact anchors for repeated prose/code, highlight deletion/focus, preparation approvals while chat is collapsed, and streaming follow/pause/resume. Headless Playwright MCP also exercised both comment categories, persistent highlights, the overall drawer, reload, Discuss focus/context, submission, and state-folder cleanup. Native Codex integration is unchanged and was not rerun.
+
 Product plan and implementation handover for the first working milestone. Rust/Axum, Leptos CSR, SQLite, WebSocket application communication, and native Codex app-server integration are implemented. Milestone 2 remains open for reconsideration after using milestone 1. The implementation progress section records current decisions and verification; protocol comparisons below retain the planning research. Works independently of the companion [coordination workbench](COORDINATION_PLAN.md).
 
 **Repository:** this tool belongs to the DevDeck Cargo monorepo alongside the coordination workbench described in `COORDINATION_PLAN.md`. Both tools live in one Cargo workspace and remain independently usable. Exact crate boundaries are an implementation detail; agent integration and other common code can be shared where useful.

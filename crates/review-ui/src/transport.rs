@@ -87,15 +87,27 @@ pub(crate) fn connect(cx: Context) {
                     if let Some(envelope) = failed {
                         match envelope.command {
                             Command::Chat { text, .. } => cx.ui.update(|u| {
-                                if u.chat_draft.is_empty() {
-                                    u.chat_draft = text;
+                                if u.chat.draft.is_empty() {
+                                    u.chat.draft = text;
                                 }
                             }),
-                            Command::Feedback { text, id, .. } => cx.ui.update(|u| {
-                                if u.feedback_draft.is_empty() {
-                                    u.feedback_draft = text;
-                                    u.editing_feedback = Some(id);
-                                }
+                            Command::Feedback {
+                                text,
+                                id,
+                                reference,
+                                category,
+                                prose_offset,
+                                code_block,
+                            } => cx.change(|ui| {
+                                ui.feedback.drafts.entry(id.clone()).or_insert(Feedback {
+                                    id: id.clone(),
+                                    text,
+                                    reference,
+                                    category,
+                                    prose_offset,
+                                    code_block,
+                                });
+                                ui.feedback.focused = Some(id);
                             }),
                             _ => {}
                         }

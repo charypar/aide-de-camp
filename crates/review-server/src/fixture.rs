@@ -40,6 +40,38 @@ pub(crate) async fn fixture_turn(app: &Shared, prompt: Option<String>) -> Result
             publish(app, &s);
             return Ok(());
         }
+        if text.starts_with("fixture:stream") {
+            let message_id = Uuid::new_v4().to_string();
+            s.review.messages.push(review_core::Message {
+                id: message_id.clone(),
+                role: MessageRole::Assistant,
+                text: String::new(),
+                reference: None,
+                status: MessageStatus::Streaming,
+            });
+            drop(s);
+            for index in 0..40 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                let mut s = app.store.lock().await;
+                if s.review.id != id || !s.review.busy {
+                    return Ok(());
+                }
+                if let Some(message) = s.review.messages.iter_mut().find(|m| m.id == message_id) {
+                    message.text.push_str(&format!(
+                        "Streaming paragraph {index}: inspect this behavior and its tradeoffs.\n\n"
+                    ));
+                    if index == 39 {
+                        message.status = MessageStatus::Complete;
+                    }
+                }
+                if index == 39 {
+                    s.review.busy = false;
+                }
+                s.save("fixture_stream", None)?;
+                publish(app, &s);
+            }
+            return Ok(());
+        }
         if text.starts_with("fixture:slow") {
             s.review.messages.push(review_core::Message {
                 id: Uuid::new_v4().to_string(),

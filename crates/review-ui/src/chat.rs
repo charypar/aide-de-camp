@@ -10,10 +10,38 @@ use review_core::*;
 pub(crate) fn Conversation(cx: Context) -> impl IntoView {
     let scroll = move |_| {
         if let Some(element) = document().get_element_by_id("conversation") {
-            cx.change(|ui| ui.chat_scroll = element.scroll_top() as f64);
+            cx.change(|ui| {
+                ui.chat.scroll = element.scroll_top() as f64;
+                ui.chat.paused =
+                    element.scroll_height() - element.client_height() - element.scroll_top() > 40;
+            });
         }
     };
-    let draft = move |event| cx.change(|ui| ui.chat_draft = event_target_value(&event));
+    let messages = Memo::new(move |_| cx.review.get().map(|r| r.messages).unwrap_or_default());
+    Effect::new(move || {
+        let _ = messages.get();
+        gloo_timers::callback::Timeout::new(0, move || {
+            if !cx.ui.get_untracked().chat.paused {
+                scroll_to_latest();
+            }
+        })
+        .forget();
+    });
+    gloo_timers::callback::Timeout::new(0, move || {
+        if let Some(el) = document().get_element_by_id("conversation") {
+            if cx.ui.get_untracked().chat.paused {
+                el.set_scroll_top(cx.ui.get_untracked().chat.scroll as i32);
+            } else {
+                scroll_to_latest();
+            }
+        }
+    })
+    .forget();
+    let latest = move |_| {
+        cx.change(|ui| ui.chat.paused = false);
+        scroll_to_latest();
+    };
+    let draft = move |event| cx.change(|ui| ui.chat.draft = event_target_value(&event));
     let key = move |event| cx.composer_key(event, false);
     let send = move |_| cx.send_chat();
     let stop = move |_| cx.send(Command::Interrupt);
@@ -25,10 +53,11 @@ pub(crate) fn Conversation(cx: Context) -> impl IntoView {
             <For each=move || cx.review.get().map(|r| r.messages).unwrap_or_default() key=|message| message.id.clone()
                 children=move |message| view! { <ChatMessage cx=cx message=message/> }/>
         </div>
+        <Show when=move || cx.ui.get().chat.paused><button class="jump-latest" on:click=latest>"Jump to latest"</button></Show>
         <div class="composer">
             <ActiveReference cx=cx/>
             <FileRange cx=cx/>
-            <textarea aria-label="Ask Codex" placeholder="Ask Codex about this change…" prop:value=move || cx.ui.get().chat_draft
+            <textarea id="chat-input" aria-label="Ask Codex" placeholder="Ask Codex about this change…" prop:value=move || cx.ui.get().chat.draft
                 on:input=draft on:keydown=key disabled=move || cx.disabled()></textarea>
             <div class="composer-actions">
                 <span class="muted">"Enter to send · Shift+Enter for a new line"</span>
@@ -64,5 +93,11 @@ fn ChatMessage(cx: Context, message: Message) -> impl IntoView {
             <div class="message-body" inner_html=move || current.get().map(|m| document::markdown(&m.text)).unwrap_or_default()></div>
             <small class="muted">{move || current.get().filter(|m| m.status != MessageStatus::Complete).map(|m| m.status.to_string()).unwrap_or_default()}</small>
         </article>
+    }
+}
+
+fn scroll_to_latest() {
+    if let Some(el) = document().get_element_by_id("conversation") {
+        el.set_scroll_top(el.scroll_height());
     }
 }

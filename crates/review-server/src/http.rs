@@ -109,7 +109,7 @@ async fn connection(app: Shared, socket: WebSocket) {
                         // Deliver the terminal state before acknowledging submission and exiting.
                         if concluded {
                             let state = app.store.lock().await.review.clone();
-                            println!("{}", state.export_path.as_deref().unwrap_or_default());
+                            println!("{}", state.export_path.as_deref().unwrap_or(NO_FEEDBACK_MESSAGE));
                             let snapshot = ServerEvent::Snapshot { review: Box::new(state) };
                             let _ = send.send(WsMessage::Text(serde_json::to_string(&snapshot).unwrap().into())).await;
                         }

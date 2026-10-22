@@ -1,6 +1,7 @@
 use crate::{
     context::Context,
     dom::{document, save_detail},
+    feedback::{FeedbackMargin, SelectionActions},
     selection::SelectionController,
 };
 use leptos::prelude::*;
@@ -13,17 +14,23 @@ pub(crate) fn DocumentView(cx: Context) -> impl IntoView {
     let pointer_down = move |event| selection.pointer_down(event);
     let pointer_move = move |event| selection.pointer_move(event);
     let pointer_up = move |event| selection.pointer_up(event);
-    let drag_release = window_event_listener(leptos::ev::mouseup, move |_| selection.finish_drag());
+    let drag_release = window_event_listener(leptos::ev::mouseup, move |_| {
+        selection.finish_drag();
+        crate::annotations::layout(cx);
+    });
     on_cleanup(move || drag_release.remove());
     let reading_scroll = move |_| {
         if let Some(element) = document().get_element_by_id("reading") {
-            cx.change(|ui| ui.scroll = element.scroll_top() as f64);
+            cx.change(|ui| ui.document.scroll = element.scroll_top() as f64);
+            crate::annotations::position_toolbar(cx);
         }
     };
     let retry = move |_| cx.send(Command::Generate);
     let toggle_changes = move |event| save_detail(cx, "all-changes", event);
     view! {
-        <main id="reading" class:has-title=move || guide.get().contains("<h1>") on:scroll=reading_scroll>
+        <main id="reading" on:scroll=reading_scroll>
+            <div id="document-sheet" class="document-sheet">
+            <div id="document-content" class:has-title=move || guide.get().contains("<h1>")>
             <div class="document-heading">
                 <p class="muted directory">{move || cx.review.get().map(|r| r.directory).unwrap_or_default()}</p>
                 <div class="document-meta">{move || cx.review.get().map(|r| format!("{} · {} changed files · {}", r.workspace.vcs, r.workspace.files.len(), r.status)).unwrap_or_default()}</div>
@@ -47,6 +54,10 @@ pub(crate) fn DocumentView(cx: Context) -> impl IntoView {
                 <p class="muted">"Use the source reference fields in the conversation to discuss any range, including code outside the guide."</p>
                 <pre>{move || cx.review.get().map(|r| r.workspace.diff).unwrap_or_default()}</pre>
             </details>
+            </div>
+            <FeedbackMargin cx=cx/>
+            </div>
+            <SelectionActions cx=cx/>
         </main>
     }
 }

@@ -59,7 +59,11 @@ pub async fn run() -> Result<()> {
                 store.save("conclude_cli", None)?;
                 println!(
                     "{}",
-                    store.review.export_path.as_deref().unwrap_or_default()
+                    store
+                        .review
+                        .export_path
+                        .as_deref()
+                        .unwrap_or(NO_FEEDBACK_MESSAGE)
                 );
                 store.cleanup()?;
                 drop(lock);
