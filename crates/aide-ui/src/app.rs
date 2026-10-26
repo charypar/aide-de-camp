@@ -12,11 +12,11 @@ pub fn App() -> impl IntoView {
     let show_all = move |_| focus.set(String::new());
     let toggle_history = move |_| completed.update(|v| *v = !*v);
     view! {
-        <header><div><strong>"Aide de camp"</strong><span class="subtitle">"Your work, ready to return to."</span></div>
-            <span class:offline=move || !cx.connected.get()>{move || if cx.connected.get() { "Connected" } else { "Reconnecting…" }}</span>
+        <header class="topbar"><div class="brand"><strong>"Aide de camp"</strong><span class="subtitle">"Tasks"</span></div>
+            <span class="connection" class:offline=move || !cx.connected.get()>{move || if cx.connected.get() { "Connected" } else { "Reconnecting…" }}</span>
         </header>
         <main>
-            <nav><button on:click=show_all>"All projects"</button><label class="history"><input type="checkbox" on:change=toggle_history prop:checked=move || completed.get()/>"Show completed"</label></nav>
+            <nav aria-label="Project navigation"><button class="project-filter" aria-pressed=move || focus.get().is_empty().to_string() on:click=show_all>"All projects"</button><label class="history"><input type="checkbox" on:change=toggle_history prop:checked=move || completed.get()/>"Show completed"</label></nav>
             <p class="notice" class:error=move || cx.error.get() role="status">{move || cx.message.get()}</p>
             <Show when=move || cx.projects.get().is_empty()><section class="empty"><h1>"Make room for your next task"</h1><p>"Register a project from your terminal:"</p><code>"aide init . --repo ./repository"</code></section></Show>
             <For each={move || cx.projects.get().into_iter().filter(|p| focus.get().is_empty() || focus.get() == p.root).map(|p| p.root).collect::<Vec<_>>()} key=|root| root.clone() children={move |root| view! { <Project root=root focus=focus completed=completed/> }}/>
@@ -37,13 +37,23 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
     let creating = RwSignal::new(false);
     let id = RwSignal::new(String::new());
     let repository = RwSignal::new(String::new());
+    let selected_repository = Memo::new(move |_| {
+        let repositories = project.get().map(|p| p.repositories).unwrap_or_default();
+        let selected = repository.get();
+        repositories
+            .iter()
+            .find(|r| r.name == selected)
+            .or_else(|| repositories.first())
+            .map(|r| r.name.clone())
+            .unwrap_or_default()
+    });
     let focus_project = move |_| focus.set(root.get_value());
     let toggle_create = move |_| creating.update(|v| *v = !*v);
     let change_id = move |event| id.set(event_target_value(&event));
     let change_repository = move |event| repository.set(event_target_value(&event));
     let start_task = move |event: web_sys::SubmitEvent| {
         event.prevent_default();
-        let repo = repository.get();
+        let repo = selected_repository.get();
         cx.send(Command::Start {
             project: root.get_value(),
             id: id.get().trim().into(),
@@ -53,12 +63,18 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
     };
     view! {
         <section class="project">
-            <div class="project-heading"><button class="project-name" on:click=focus_project>{move || project.get().map(|p| p.name).unwrap_or_default()}</button><button on:click=toggle_create disabled=move || !cx.connected.get()>"New task"</button></div>
+            <div class="project-heading"><button class="project-name" on:click=focus_project>{move || project.get().map(|p| p.name).unwrap_or_default()}</button><button class="primary" on:click=toggle_create aria-expanded=move || creating.get().to_string() disabled=move || !cx.connected.get()>"New task"</button></div>
             <p class="path">{root.get_value()}</p>
             <Show when=move || creating.get()><form class="create" on:submit=start_task>
                 <label>"Task ID"<input required pattern=r"[A-Za-z0-9][A-Za-z0-9_\-]{0,79}" placeholder="task-1234" on:input=change_id prop:value=move || id.get()/></label>
-                <label>"Repository"<select on:change=change_repository><option value="">"Choose repository (optional for one)"</option>{move || project.get().map(|p| p.repositories.into_iter().map(|r| view!{<option value=r.name.clone()>{r.name.clone()}</option>}).collect_view())}</select></label>
-                <button type="submit" disabled=move || !cx.connected.get()>"Start and open Codex"</button>
+                <label>"Repository"<select required on:change=change_repository>
+                    <Show when=move || selected_repository.get().is_empty()><option value="">"No repositories available"</option></Show>
+                    {move || project.get().map(|p| p.repositories.into_iter().map(|r| {
+                        let name = r.name.clone();
+                        view! { <option value=r.name.clone() prop:selected=move || selected_repository.get() == name>{r.name.clone()}</option> }
+                    }).collect_view())}
+                </select></label>
+                <button class="primary" type="submit" disabled=move || !cx.connected.get() || selected_repository.get().is_empty()>"Start and open Codex"</button>
             </form></Show>
             <p class="error">{move || project.get().and_then(|p| p.error)}</p>
             { [Status::Attention, Status::Working, Status::Waiting, Status::Completed].into_iter().map(move |status| {
@@ -154,7 +170,10 @@ fn Task(root: String, id: String) -> impl IntoView {
     };
     view! {
         <article class="task">
-            <div class="task-heading"><button class="task-title" on:click=toggle aria-expanded=move || expanded.get().to_string()>{move || if expanded.get() { "▾ " } else { "▸ " }}{id.get_value()}</button><span class="repo">{move || task.get().map(|t| t.task.repository)}</span>
+            <div class="task-heading"><button class="task-title" on:click=toggle aria-expanded=move || expanded.get().to_string()>
+                <span class="chevron" aria-hidden="true">{move || if expanded.get() { "▾" } else { "▸" }}</span>
+                <span class="task-id">{id.get_value()}</span><span class="repo">{move || task.get().map(|t| t.task.repository)}</span>
+            </button>
                 <Show when=is_open><button on:click=attach disabled=move || !cx.connected.get()>"Open terminal"</button></Show>
             </div>
             <p class="reason">{move || task.get().map(|t| t.reason)}</p>

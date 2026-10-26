@@ -29,7 +29,7 @@ test('task creation, native status, focus, confirmation and retained history',as
  const f=fixture();const server=await manager(f);
  try{
   await page.goto(server.url);await expect(page.getByRole('button',{name:'Cat Herder',exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'New task'}).click();await page.getByLabel('Task ID').fill('bad task');expect(await page.getByLabel('Task ID').evaluate(el=>el.checkValidity())).toBe(false);await page.getByLabel('Task ID').fill('task-1234');await page.getByRole('button',{name:'Start and open Codex'}).click();
+  await page.getByRole('button',{name:'New task'}).click();await expect(page.getByRole('combobox',{name:'Repository'})).toHaveValue('repo');await page.getByLabel('Task ID').fill('bad task');expect(await page.getByLabel('Task ID').evaluate(el=>el.checkValidity())).toBe(false);await page.getByLabel('Task ID').fill('task-1234');await page.getByRole('button',{name:'Start and open Codex'}).click();
   const row=taskRow(page,'task-1234');await expect(row).toBeVisible();await row.getByRole('button',{name:/task-1234/}).click();
   await expect(row).toContainText('Fixture conversation',{timeout:25000});await expect(row).toContainText('Conversation idle');
   const workspace=join(f.root,'repo-tasks','task-1234');expect(readFileSync(join(workspace,'hello.txt'),'utf8')).toBe('trunk\n');
@@ -42,6 +42,50 @@ test('task creation, native status, focus, confirmation and retained history',as
   page.once('dialog',d=>d.accept());await row.getByRole('button',{name:'Close task'}).click();await expect(row).toHaveCount(0,{timeout:20000});expect(existsSync(workspace)).toBe(false);
   await page.getByLabel('Show completed').check();await expect(row).toBeVisible();await row.getByRole('button',{name:/task-1234/}).click();await expect(row).toContainText('recordings');
   expect(f.run(binary,['task','list','--completed'])).toContain('Completed');
+ }finally{await stop(server);cleanup(f);}
+});
+
+test('repository defaults and selection survive refreshes; the full task title toggles accessibly',async({page})=>{
+ const f=fixture();
+ f.run('git',['clone',join(f.dir,'source'),'second']);
+ f.run(binary,['init','.','--repo','./second']);
+ const server=await manager(f);
+ try{
+  await page.goto(server.url);
+  const newTask=page.getByRole('button',{name:'New task'});
+  await newTask.click();
+  const repository=page.getByRole('combobox',{name:'Repository'});
+  await expect(repository).toHaveValue('repo');
+  await repository.selectOption('second');
+  // Periodic snapshots must not overwrite an explicit selection.
+  await page.waitForTimeout(2500);
+  await expect(repository).toHaveValue('second');
+  await newTask.click();await newTask.click();
+  await expect(repository).toHaveValue('second');
+  const id='a-task-with-a-long-title-to-check-narrow-screen-layout';
+  await page.getByLabel('Task ID').fill(id);
+  await page.getByRole('button',{name:'Start and open Codex'}).click();
+  const row=taskRow(page,id),title=row.getByRole('button',{name:new RegExp(id)});
+  await expect(row).toContainText('Fixture conversation',{timeout:25000});
+  expect(existsSync(join(f.root,'second-tasks',id,'hello.txt'))).toBe(true);
+  await expect(title).toHaveAttribute('aria-expanded','false');
+  const titleBox=await title.boundingBox(),headingBox=await row.locator('.task-heading').boundingBox();
+  expect(titleBox.height).toBeGreaterThanOrEqual(44);
+  expect(titleBox.width).toBeGreaterThan(headingBox.width*.65);
+  // Click the far edge, away from the chevron and task ID.
+  await title.click({position:{x:titleBox.width-12,y:titleBox.height/2}});
+  await expect(title).toHaveAttribute('aria-expanded','true');
+  await expect(row.getByRole('button',{name:'Copy path'})).toBeVisible();
+  await title.press('Enter');await expect(title).toHaveAttribute('aria-expanded','false');
+  await title.press('Space');await expect(title).toHaveAttribute('aria-expanded','true');
+  await row.getByRole('button',{name:'Open terminal'}).click();
+  await expect(page.getByRole('status')).toContainText('Opened terminal');
+  await expect(title).toHaveAttribute('aria-expanded','true');
+  await page.setViewportSize({width:390,height:844});
+  await expect(row.getByRole('button',{name:'Close task'})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await title.click();await expect(title).toHaveAttribute('aria-expanded','false');
+  await title.click();await expect(title).toHaveAttribute('aria-expanded','true');
  }finally{await stop(server);cleanup(f);}
 });
 

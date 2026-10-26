@@ -31,6 +31,8 @@ Alternate entry: check out someone else’s work into a dedicated workspace with
 
 ## Dashboard and supervision
 
+**Dashboard refinement — 2026-10-26:** use the review tool's cool grey palette, white header and surfaces, blue accents, typography, and control styling. The full task title area (including repository and surrounding space) toggles details, with keyboard activation and a visible focus indicator; terminal actions remain separate. New-task forms select the first available project repository by default and preserve an explicit selection while the form is reopened or task snapshots refresh. Keep controls and expanded details usable on narrow screens. Verified with all 9 dashboard browser tests, headless Playwright MCP desktop/mobile checks, and formatting/Clippy checks. Harness integration is unchanged; native Codex checks were not rerun.
+
 List active tasks grouped first by project, then by status (waiting, working, requires attention), with reasons. Navigate from the overview to a focused single-project listing; provide a show/hide completed toggle for project history. Tasks have collapsed summaries and expandable details. Suggested collapsed content: ID, brief, repository, status/reason, and quick actions; expanded content: paths, session details, errors, and cleanup. Exact layout is left to implementation judgment.
 
 Task creation is available from both overview and project views; a button in each project heading is the preferred starting idea. Project initialization stays CLI-only in milestone 1. An empty dashboard should explain `aide init . --repo ./project`, and newly registered projects should become visible without recreating the dashboard. Each task offers access to Zed, its native harness terminal, and guided review.
