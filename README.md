@@ -6,125 +6,175 @@
 >
 > It's likely that the whole thing is quite rough, and will change a lot. Try at your own risk. You've been warned.
 
-AI + Development Environment, and an aide-de-camp for development work. Aide is the short name; the coordination CLI is `aide`, and the independent review CLI is `aide-review`.
+AI + Development Environment, and an aide-de-camp for development work. Aide contains two tools you can use together or independently:
 
-A local task workbench with an independent guided review tool. Codex narrates your current Git uncommitted changes or jj working commit. Select guide text or source lines to discuss them, record explicit feedback, and submit one Markdown handover.
+- **Task management (`aide`):** create a workspace and Codex conversation for each task, switch between tasks, and clean up when finished.
+- **Guided review (`aide-review`):** understand local changes through an AI-generated walkthrough, discuss the code, and collect feedback into a Markdown handover.
 
-The Cargo workspace contains both tools. See the [coordination plan](plans/COORDINATION_PLAN.md) and [review plan](plans/REVIEW_PLAN.md) for their scope.
+## Installation
 
-## Task workspaces
+Install Rust via [rustup](https://rustup.rs) and [Just](https://github.com/casey/just) (`brew install just` on macOS, or `cargo install just --locked`). Then, from this repository:
 
-Install both commands with `just install`. Aide also needs jj, Git, tmux, fish, Codex, Alacritty, and Zed installed. Start from a project container with its repository checkout inside it:
+```sh
+just setup
+just install
+```
+
+This builds and installs both commands with their browser interfaces embedded. The installed tools do not need Node or Trunk at runtime.
+
+Both tools use an already-installed, signed-in **Codex CLI** with your normal configuration and authentication. Review needs **Git or jj**. Task management additionally uses **Git, jj, tmux, and fish**, with **Alacritty** for dedicated terminal windows and **Zed** for editor access. Run `aide doctor` or `aide-review doctor` to check external commands.
+
+## Task management
+
+### Register a project and start the dashboard
+
+A project is a directory containing one or more existing repository checkouts. Aide creates task workspaces beside each checkout:
+
+```text
+~/Projects/CatHerder/
+├── cat-herder/                # Existing main checkout
+├── cat-herder-tasks/
+│   └── task-1234/             # Workspace created for a task
+└── .aide/state.sqlite         # Project and task records
+```
 
 ```sh
 cd ~/Projects/CatHerder
 aide init . --repo ./cat-herder
-aide                         # Start the local dashboard
+aide                          # Start the dashboard and open the browser
 ```
 
-Use **New task** in the dashboard to create a colocated jj/Git workspace from fetched `trunk()` and open an idle Codex conversation in its own Alacritty window. Or, in another terminal inside the project:
+`init` registers an existing checkout; it does not create or clone a repository. For a Git-only checkout, it initializes colocated jj. Repeat initialization with another `--repo` to add a repository to the project.
+
+The dashboard lists tasks across registered projects, with status and actions to open their terminal, editor, or review. Select a project to focus on it; **Show completed** includes its task history. Project registration is CLI-only.
+
+### Start, return to, and finish a task
+
+Use **New task** in the dashboard, or run these commands from another terminal anywhere inside the project:
 
 ```sh
-aide task start task-1234
-aide task attach task-1234
-aide task attach task-1234 --new-window
+aide task start task-1234 --new-window
 aide task list
-aide task review task-1234
-aide task cleanup task-1234
+aide task attach task-1234 --new-window
 ```
 
-Independent task operations run concurrently. Conflicting operations on the same task report that it is busy; retry after the current operation finishes. Workspace mutations sharing a repository wait their turn, while other repositories remain usable.
+Starting fetches the repository, creates a colocated jj/Git workspace from `trunk()`, and opens a fresh Codex conversation for you to plan and execute the task. For projects with several repositories, add `--repo <name>`. Task IDs are unique within the project, including completed history.
 
-`task start` and runtime repair need dashboard mode running. Attaching to a healthy task or resuming its live backend works without it. Inside tmux, attach switches the current client; outside it, attach connects normally. Ctrl-b then d, `aide task detach`, or closing the dedicated Alacritty window disconnects you and leaves the task running.
+The dashboard must be running to start or repair managed task sessions. For just a workspace, use `aide task start task-1234 --workspace-only`; this needs no dashboard and starts no agent.
 
-Each task has two tmux windows:
+`--new-window` opens a dedicated Alacritty window. Without it, start/attach uses the current terminal, switching sessions if you are already inside tmux. **Ctrl-b then d**, `aide task detach`, or closing the dedicated terminal window detaches and leaves the task running. Attaching to a healthy task works without the dashboard.
 
-- **work:** fish with the native Codex UI. Exit Codex to return to fish; run `aide codex resume` to reconnect in that same terminal. Exiting the UI leaves the backend running.
-- **backend:** the task worker, dedicated Codex server, and recording monitor. Ctrl-C here stops the backend and interrupts active work; its stopped output remains visible.
-
-With the usual tmux bindings, Ctrl-b then w selects a window; Ctrl-b then c creates another for jj commands or a local server. You can rename/reorder windows. `aide codex resume` works from any window in the task session, including after changing directories. From another terminal, first use `aide task attach <id>`. A directory belonging to a different task is rejected.
-
-To refresh the environment available to agent tools: exit the Codex UI, stop the backend with Ctrl-C in its window, return to the work shell, change exported variables, then run `aide codex resume`. With the dashboard running, this recreates the backend from that shell's exported environment, including removed variables, and resumes the saved conversation idle. Resuming a healthy backend simply reconnects; it does not refresh its environment.
-
-Stopping Aide leaves task sessions running. Dashboard startup restores missing task sessions after a reboot, with saved conversations idle and requiring attention; it never replays interrupted commands. A never-used Codex conversation may reopen fresh because it has no durable recording yet. If you stop/delete only the backend window, use `aide codex resume`, `aide task attach <id>`, or **Recover session** to repair it. Recovery preserves user-added windows and refuses to replace unrelated foreground commands. After a reboot it restores Aide's windows, not arbitrary local-server commands you launched yourself.
-
-Closing a task requires confirmation, warns about live sessions, ends the entire task tmux session (including your extra windows), and removes the workspace. Publish your work manually before closing. History and recordings remain available under **Show completed**.
-
-A short first test, after initialization and starting `aide` in another terminal:
+When ready, review the changes and publish your work manually. Then close the task from the dashboard or CLI:
 
 ```sh
-aide task start trial-1 --new-window
-# In the new terminal: have a short Codex conversation, then exit Codex.
-aide codex resume             # In that task's fish shell
-# Detach with Ctrl-b then d; back in the project terminal:
-aide task attach trial-1 --new-window
-aide task review trial-1       # After making local changes
-# Back in the project terminal, when the workspace is disposable:
-aide task cleanup trial-1      # Type trial-1 to confirm deletion
+aide task review task-1234     # Open guided review for this workspace
+aide task cleanup task-1234    # Type the task ID to confirm deletion
 aide task list --completed
 ```
 
-For workspace management alone, `aide task start task-1234 --workspace-only` does not need a dashboard or start an agent. Repeat `aide init . --repo ./another-repo` to register another repository; use `--repo <name>` when starting tasks in projects with several repositories. Task IDs are unique within a project, including completed history.
+Cleanup warns about live sessions, stops the entire task tmux session (including windows you added), and removes the workspace. Task history and retained conversation recordings remain available. Creating a PR or completing a review does not close the task automatically.
 
-Personal registry and native recording copies live under `~/.aide`; project records live in `.aide/state.sqlite`. `--home` or `AIDE_HOME` selects a separate personal data directory. Codex keeps its normal configuration, authentication and original native sessions. Once a conversation has saved history, its ID is bound to the task; starting another conversation in the same folder does not switch that association. Recording copies check for changes every ten seconds, skip unchanged files, and flush on orderly shutdown/cleanup. The optional conversation label comes from Codex's native thread name; Aide does not generate summaries. Task monitoring reads native status without taking over approvals, which stay in Codex. The app-server transport is experimental and was checked with Codex 0.163.0.
+### Work inside the task terminal
 
-`aide --no-open --port 4318` serves the dashboard without opening the browser. It listens only on localhost. `aide doctor` checks external commands. `AIDE_CODEX` and `AIDE_TMUX_SOCKET` allow isolated harness/tmux configurations, primarily for acceptance tests.
+Each task has two tmux windows:
 
-## Start developing
+- **work:** fish running the native Codex terminal UI. Exit Codex to return to fish, then run `aide codex resume` to reconnect in that terminal. Exiting the UI leaves its backend running.
+- **backend:** the worker, dedicated Codex server, and recording monitor. Ctrl-C here stops the backend and interrupts active work.
 
-Prerequisites: Rust via [rustup](https://rustup.rs), a configured and signed-in Codex CLI, and Git or jj. Install [Just](https://github.com/casey/just) with `brew install just` on macOS or `cargo install just --locked`.
+With the usual tmux bindings, **Ctrl-b then w** selects a window and **Ctrl-b then c** creates one for a shell, jj commands, or a local server. You can rename or reorder windows. `aide codex resume` works from any window in the task's tmux session; from elsewhere, attach to the task first. Approvals and conversation stay in the native Codex UI.
+
+To change the environment available to Codex tools:
+
+1. Exit the Codex UI and stop the backend with Ctrl-C in its window.
+2. Return to the work shell and change the exported environment variables.
+3. With the dashboard running, run `aide codex resume`.
+
+This starts a backend with that shell's environment and resumes the saved conversation idle. Resuming an already healthy backend only reconnects; it does not refresh its environment.
+
+### Recovery and local data
+
+Stopping the dashboard leaves tasks running. Starting it again reconnects to surviving sessions and restores missing sessions after a reboot. Restored conversations are idle and require attention; interrupted commands are not replayed. Conversations without saved history may reopen fresh. Aide restores its own windows, not arbitrary server commands you started yourself.
+
+If a backend is stopped or its window deleted, use `aide codex resume`, `aide task attach <id>`, or the dashboard's **Recover session** action. Repair requires the dashboard and preserves user-added windows.
+
+Project records live in `.aide/state.sqlite`; the personal project registry and retained native conversation recordings live under `~/.aide`. Use `--home` or `AIDE_HOME` to select another personal data directory. Codex retains its original sessions separately. A task stays associated with its saved conversation even if you start another conversation in the same directory.
+
+`aide --no-open --port 4318` serves the dashboard on localhost without opening a browser. Independent task operations run concurrently; conflicting operations on one task report busy, while workspace changes sharing a repository wait their turn. Codex's app-server transport is experimental; this version was checked with Codex 0.163.0.
+
+## Guided review
+
+### Start with local changes
+
+Run the reviewer in any Git or jj checkout; no Aide project registration or dashboard is needed:
 
 ```sh
-just setup
-just dev /path/to/repository
-```
-
-Open the printed local URL. `just dev` uses the Rust `xtask` runner to watch Rust and UI sources (no Python needed); refresh after a UI build. `just --list` documents the commands. Browser testing dependencies are optional development tooling, installed by `just setup-browser`.
-
-## Install and use
-
-```sh
-just install
 cd /path/to/repository
 aide-review
 ```
 
-The installed CLI embeds the UI and SQLite; it needs no Trunk or Node runtime. It launches the already-installed Codex harness with your normal configuration and authentication. The browser opens when the guide is ready; approval/input requests and preparation failures open it earlier so you can respond. The URL is printed immediately if you want to open it yourself. Review sessions use a read-only sandbox with approval requests shown in the UI. You can interrupt work and answer native harness requests in the browser. Pending approvals and questions appear at the top of the side panel, including while the initial guide is being prepared.
+Equivalent entry points are `aide review` in the current repository and `aide task review <id>` for a registered task's workspace. Both forward the reviewer's options and subcommands.
 
-Preparation shows an elapsed clock in the terminal and browser, with a distinct status when Codex is waiting for your response. Browser refresh preserves the clock; retry starts a new attempt. Elapsed time includes approval waits and is not a completion estimate. Redirected terminal output reports state changes and progress every 15 seconds.
+The input is the whole repository's local change: staged, unstaged, and untracked changes against Git HEAD, or the jj working commit `@`. Ignored untracked files are excluded. To review an existing PR, first use Git or jj to prepare a workspace where its changes appear as that local diff.
 
-`aide-review --no-open --port 4317` prints the URL without opening a browser. `aide-review --path /path/to/repository` starts elsewhere. Stop with Ctrl-C and run again to resume. The server remembers its port so existing browser tabs can reconnect; use `--port 0` to choose a different port if necessary. To conclude without the browser, first stop the server, then run `aide-review conclude`. `aide-review history` lists archived reviews until conclusion cleans up the local database. `aide-review --fixture` provides a clearly deterministic harness for UI development without model calls.
+Codex reads the repository and prepares a walkthrough explaining the implementation in a logical order, with text and code excerpts. The browser opens when the guide is ready, or earlier if preparation needs your input. The terminal prints the URL and progress immediately. The review agent uses a read-only sandbox; approval requests and questions appear in the browser.
 
-`aide review` delegates to the same executable in the current repository; `aide task review <id>` locates the task workspace first. Both preserve the reviewer’s options and subcommands. Review feedback remains a Markdown handover.
+### Understand the change and collect feedback
 
-## State and feedback
+Read the walkthrough alongside your editor's full diff. The guide helps explain the approach; Zed remains useful for browsing surrounding code and inspecting every change.
 
-Application state lives in `.review/` in the starting directory: `review.sqlite`, the lock, and temporary files. The folder is ignored by the review input and contains its own Git ignore file. Add `.review/` and `review-feedback-*.md` to the repository's ignore file if desired.
+- Select guide text or code, then choose **Discuss with agent** to ask a question with that reference attached.
+- Choose **Add feedback** to record a comment at that location. Mark it as a **Change** or **Question**; discussion alone does not become feedback.
+- Use **Reference a file range** in chat for code outside the walkthrough, including lines found in your editor. References support both old and new sides of the diff.
+- Add broader notes in **Overall feedback** at the bottom of the page.
 
-The complete repository workspace is reviewed even when launched in a subdirectory. Git input combines staged, unstaged, and untracked changes against HEAD. In jj it uses the working commit `@`. Both respect `.gitignore` for untracked files, including nested rules and negation; already tracked changes remain part of the review, matching VCS behavior. Source mappings are verified against a captured snapshot; binary changes are represented in the diff and described in prose.
+For code ranges, drag across rows or click a row then Shift-click another. Enter sends a chat message or records an inline comment; Shift+Enter inserts a newline. Comments stay editable, and drafts and reading position survive interruptions. Only recorded inline comments enter the handover.
 
-The workspace is captured once when `aide-review` starts. Edits during a running session do not reset it; stop and relaunch to review changed code. On relaunch, changed code archives the previous review and automatically prepares a fresh guide. Archived reviews remain in SQLite until conclusion; this first milestone does not rebase feedback onto evolving code. Successful conclusion removes the whole `.review/` folder, including temporary assets, leaving the Markdown feedback file in the starting directory. A later `aide-review` run starts fresh, even on unchanged code. Failed exports preserve review state. Each page represents one review, with no in-page restart or regeneration controls. If preparation fails or is interrupted, **Retry preparation** retries the missing guide. `aide-review conclude` exports the saved review even if code has changed since it stopped.
+**Submit review** writes `review-feedback-<review-id>.md` in the starting directory and exits. The file contains your overall feedback, changes to implement, and questions, retaining source references and your wording. There is no AI rewriting pass. Hand the file to an implementation agent or use it to prepare feedback for the author; nothing is submitted to GitHub automatically.
 
-The walkthrough sits beside a collapsible chat panel; the panel icon beside the Aide name toggles it. Select guide prose or code to reveal two actions: **Add feedback** opens a wide, flat comment editor in the right margin, flush with the page edge; **Discuss with agent** opens chat, attaches that reference, and focuses the composer. Selecting alone does not change chat context. Recorded feedback stays highlighted until deleted; clicking a highlight focuses its comment. Comments remain editable, and overlapping comments stack without covering each other. Inline editors have a white background; opening one preserves the document’s reading position.
+Submitting with no feedback concludes the review without creating a file. Successful conclusion removes the local review state; failed exports preserve it. Codex's native conversation history remains.
 
-Drag or triple-click to select prose; drag across code rows or click a row then Shift-click another to select a range. Sent chat messages show the quoted passage or captured code excerpt. Enter sends chat or records an inline comment; Shift+Enter inserts a newline. Use **Reference a file range** in chat for changes absent from the guide, including ranges found in Zed. Source references include an old/new side for deleted lines. **Copy reference** copies `path:line` for opening in your editor. Chat follows streamed text while you are at the bottom; scrolling up pauses following until you return to the bottom or use **Jump to latest**. Pending requests remain signalled in the header when chat is collapsed.
+### Pause, resume, and review a new revision
 
-Inline comments have a **Change / Question** toggle. The collapsible bottom drawer contains one uncategorised **Overall feedback** field, saved as you type, and **Submit review**. Inline drafts survive interruptions but only recorded comments enter the handover. Overall feedback is included directly. Panel state, drafts, and highlights survive restart.
+Stop with Ctrl-C and run `aide-review` again from the same directory to resume. State lives in `.review/` in that directory. Add `.review/` and `review-feedback-*.md` to your repository's ignore file if desired.
 
-**Submit review** writes `review-feedback-<review-id>.md` without an AI pass or extra confirmation. If there is no recorded feedback and the overall field is blank, submission or `aide-review conclude` instead reports “Review concluded. No feedback recorded.” and removes the review state without creating a file. Exports contain **Overall feedback**, then **Changes** to implement, then **Questions** to answer and discuss or plan. Each inline comment retains its source reference or quoted guide passage. Wording and comment order within each group are preserved; empty groups are omitted. A completion message shows the export path, and the CLI exits. Existing files with different contents are never overwritten.
+Each session reviews a captured snapshot. Edits made while it runs do not update that snapshot. Stop and relaunch after changing code: the previous review is archived and a new guide is prepared. Feedback is not automatically transferred to the new revision. Archives remain in the local database until conclusion cleans it up.
 
-Walkthrough length should match the substantive change: small patches get short guides. Modified-file excerpts use complete overlapping hunks from the captured diff, retaining deletions and context. Block headers distinguish diffs, new files, and current code; clicking a block's title selects its source range for chat or feedback. A range in a mixed diff defaults to current lines; select deleted rows to reference the old side.
-
-The harness owns its native session history; conclusion does not remove Codex history. Application actions, agent events, drafts, selections, and scroll positions are persisted locally until conclusion. Commands waiting for a connection are retained in browser storage and retried with stable IDs; the completed review's outbox is cleared. The UI only enables sending new agent work while connected.
-
-## Tests
+Useful options and commands:
 
 ```sh
-just test
-just check
-just setup-browser
-just test-browser
-just test-live
+aide-review --path /path/to/repository
+aide-review --no-open --port 4317
+aide-review --port 0           # Choose a new port if the remembered one is occupied
+# After stopping the running review server:
+aide-review history           # List locally retained reviews
+aide-review conclude          # Export saved feedback and clean up without the browser
 ```
 
-Automated tests cover source mappings, persistence, exports, VCS input, and browser workflows. The live check uses your configured Codex account and MCPs, and may incur normal model usage. Headless Playwright MCP is also used for interactive acceptance testing. See the [review plan](plans/REVIEW_PLAN.md) for scope and verification status.
+If guide preparation fails or is interrupted, use **Retry preparation** in the browser. `conclude` exports the saved review even if the code has changed since the server stopped.
+
+## Development and tests
+
+Both tools belong to one Cargo workspace. `just --list` describes the available recipes.
+
+```sh
+just dev /path/to/repository   # Watch the review server and UI
+just aide                     # Build and run the task dashboard
+# For dashboard UI development, run these in separate terminals:
+just aide-dev-ui
+just aide-dev-server
+```
+
+The review development runner watches Rust and UI sources; refresh the browser after a UI build. Dashboard development watches UI assets; restart its server after Rust changes. `aide-review --fixture` uses a deterministic harness for UI development without model calls.
+
+```sh
+just fmt                      # Format Rust
+just check                    # Formatting and Clippy checks
+just test                     # Rust tests
+just setup-browser            # Install optional browser-test dependencies
+just test-browser             # Headless browser tests for both tools
+just build                    # Build both tools with embedded browser assets
+```
+
+Live integration checks use your configured Codex account and MCPs: `just test-live` checks review, `just test-aide-protocol` checks task observation without a model prompt, and `just test-aide-live` checks native task conversations and recovery. Checks that send model prompts may incur normal usage charges.
+
+See the [coordination plan](plans/COORDINATION_PLAN.md) and [review plan](plans/REVIEW_PLAN.md) for scope, implementation decisions, and verification status.
