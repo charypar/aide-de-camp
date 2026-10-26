@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Controlled native-protocol fixture. No model or network calls."""
+import base64, hashlib, json, os, signal, socket, struct, sys, threading, time
+from pathlib import Path
+
+def frame(conn, value, masked=False):
+    data=json.dumps(value).encode(); n=len(data)
+    header=bytes([129, (128 if masked else 0) | (n if n<126 else 126)])
+    if n>=126: header+=struct.pack('!H', n)
+    if masked:
+        mask=b'abcd'; header+=mask; data=bytes(b^mask[i%4] for i,b in enumerate(data))
+    conn.sendall(header+data)
+
+def exact(conn,n):
+    data=b''
+    while len(data)<n:
+        part=conn.recv(n-len(data))
+        if not part: raise EOFError()
+        data+=part
+    return data
+
+def receive(conn):
+    a,b=exact(conn,2); n=b&127
+    if n==126:n=struct.unpack('!H',exact(conn,2))[0]
+    if n==127:n=struct.unpack('!Q',exact(conn,8))[0]
+    mask=exact(conn,4) if b&128 else None
+    data=exact(conn,n)
+    if mask:data=bytes(v^mask[i%4] for i,v in enumerate(data))
+    if a&15==8:raise EOFError()
+    return json.loads(data)
+
+def handshake(conn, client=False):
+    if client:conn.sendall(b'GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n')
+    raw=b''
+    while not raw.endswith(b'\r\n\r\n'):raw+=exact(conn,1)
+    if not client:
+        key=[l.split(b':',1)[1].strip() for l in raw.split(b'\r\n') if l.lower().startswith(b'sec-websocket-key:')][0]
+        digest=base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+        conn.sendall(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+digest+b'\r\n\r\n')
+
+args=sys.argv[1:]
+if '--version' in args:print('codex fixture');sys.exit()
+if args and args[0]=='app-server':
+    endpoint=args[args.index('--listen')+1][7:]
+    server=socket.socket(socket.AF_UNIX);server.bind(endpoint);server.listen()
+    Path('.fixture-backend.json').write_text(json.dumps({'pid':os.getpid(), 'environment':{k:v for k,v in os.environ.items() if k.startswith('AIDE_TEST_')}}))
+    state={'thread':None}
+    root=Path(os.environ['AIDE_FIXTURE_RECORDINGS']); root.mkdir(exist_ok=True)
+    def other_thread():
+        if not state['thread'] or not Path('.fixture-other-thread').exists(): return None
+        path=root/'other-fixture.jsonl'
+        if not path.exists():path.write_text('unrelated conversation\n')
+        return {'id':'other-fixture','path':str(path),'cwd':os.getcwd(),'status':{'type':'idle'},'name':'Unrelated conversation'}
+    def serve(conn):
+        try:
+            handshake(conn)
+            while True:
+                request=receive(conn);method=request.get('method');params=request.get('params',{})
+                if 'id' not in request:continue
+                error=None;result={}
+                if method=='initialize':result={'platformFamily':'unix','platformOs':'macos','userAgent':'fixture'}
+                elif method=='thread/loaded/list':
+                    other=other_thread()
+                    result={'data':([other['id']] if other else [])+([state['thread']['id']] if state['thread'] else [])}
+                elif method in ('thread/start','thread/resume'):
+                    identity=params.get('threadId') or 'fixture-'+str(time.time_ns())
+                    path=root/(identity+'.jsonl')
+                    if method=='thread/resume' and not path.exists():error={'message':'Missing native recording'}
+                    else:
+                        path.write_text(json.dumps({'id':identity,'cwd':os.getcwd()})+'\n')
+                        state['thread']={'id':identity,'path':str(path),'cwd':os.getcwd(),'status':{'type':'idle'},'name':'Fixture conversation'}
+                        result={'thread':state['thread']}
+                elif method=='thread/read':
+                    known=state['thread'] or {}
+                    other=other_thread()
+                    selected=known if known.get('id')==params.get('threadId') else other
+                    if not selected or selected.get('id')!=params.get('threadId'):
+                        error={'message':'Unknown thread'}
+                    t=dict(selected or {})
+                    control=Path(os.getcwd())/'.fixture-status'
+                    if control.exists():t['status']=json.loads(control.read_text())
+                    result={'thread':t}
+                elif method=='mcpServerStatus/list':result={'data':[]}
+                else:error={'message':'Unexpected request '+str(method)}
+                frame(conn, {'id':request['id'],**({'error':error} if error else {'result':result})})
+        except (EOFError,ConnectionError,OSError):pass
+        finally:conn.close()
+    while True:
+        conn,_=server.accept();threading.Thread(target=serve,args=(conn,),daemon=True).start()
+else:
+    endpoint=args[args.index('--remote')+1][7:]
+    conn=socket.socket(socket.AF_UNIX);conn.connect(endpoint);handshake(conn,True)
+    def call(i,m,p):frame(conn,{'id':i,'method':m,'params':p},True);return receive(conn)
+    call(1,'initialize',{})
+    if args and args[0]=='resume':response=call(2,'thread/resume',{'threadId':args[1]})
+    else:response=call(2,'thread/start',{})
+    print('Fixture Codex conversation ready',flush=True)
+    # Ctrl-D/EOF returns to the real fish shell; normal commands are not run.
+    for line in sys.stdin:
+        print('Fixture input: '+line.strip(),flush=True)

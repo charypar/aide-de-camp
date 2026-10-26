@@ -98,7 +98,7 @@ impl Development {
                     .success()
                 {
                     self.server = Some(
-                        self.command(self.root.join("target/debug/review").to_str().unwrap())
+                        self.command(self.root.join("target/debug/aide-review").to_str().unwrap())
                             .arg("--path")
                             .arg(&self.workspace)
                             .arg("--assets")

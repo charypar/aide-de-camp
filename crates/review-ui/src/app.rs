@@ -56,7 +56,7 @@ pub(crate) fn App() -> impl IntoView {
                 <button class="chat-toggle" on:click=toggle_chat aria-label=chat_label title=chat_label aria-expanded=move || (!cx.ui.get().chat.collapsed).to_string() aria-controls="chat-panel">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
                 </button>
-                <strong>"DevDeck"</strong><span class="muted">"/ Review"</span>
+                <strong>"Aide"</strong><span class="muted">"/ Review"</span>
             </div>
             <div class="top-actions">
                 <span class="connection" class:offline=move || !cx.connected.get()>{move || {

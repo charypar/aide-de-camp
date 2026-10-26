@@ -1,5 +1,5 @@
 {
-  "name": "devdeck-acceptance-tests",
+  "name": "aide-acceptance-tests",
   "private": true,
   "type": "module",
   "scripts": {"test": "playwright test"},

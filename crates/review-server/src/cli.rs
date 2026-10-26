@@ -44,7 +44,7 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
     if cli.command.is_some() && !crate::state_dir::StateDirectory::exists(&dir) {
-        anyhow::bail!("No review exists in this directory. Run review first.");
+        anyhow::bail!("No review exists in this directory. Run aide-review first.");
     }
     let lock = crate::lock::ReviewLock::acquire(&dir)?;
     let mut store = if cli.command.is_some() {

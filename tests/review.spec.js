@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 
-const binary = resolve('target/debug/review');
+const binary = resolve('target/debug/aide-review');
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'devdeck-e2e-'));
+  const dir = mkdtempSync(join(tmpdir(), 'aide-e2e-'));
   execFileSync('git', ['init', '-q', dir]);
   writeFileSync(join(dir, 'calculator.rs'), 'pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n');
   return dir;
@@ -559,7 +559,7 @@ test('chat toggle stays beside the brand and feedback fills the right margin', a
  try {
   await ready(page,server.url);
   const toggle=page.getByRole('button',{name:'Hide chat',exact:true});
-  const brand=await page.getByText('DevDeck',{exact:true}).boundingBox();
+  const brand=await page.getByText('Aide',{exact:true}).boundingBox();
   const control=await toggle.boundingBox();
   expect(control.x+control.width).toBeLessThan(brand.x);
   await expect(toggle).toHaveAttribute('title','Hide chat');

@@ -1,0 +1,4 @@
+[build]
+dist = "../../dist-aide"
+[watch]
+watch = ["src", "style.css", "index.html", "../aide-core/src"]

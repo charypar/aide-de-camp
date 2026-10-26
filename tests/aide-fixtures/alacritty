@@ -1,0 +1,3 @@
+#!/bin/sh
+# Browser tests exercise the launch action without opening a GUI window.
+exit 0

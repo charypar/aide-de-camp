@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "review"
+name = "aide-review"
 path = "src/main.rs"
 
 [dependencies]

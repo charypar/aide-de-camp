@@ -1,5 +1,9 @@
 # Guided review — product plan
 
+## Command integration — implemented
+
+The standalone executable is now `aide-review`, retaining the existing subcommands and options. The coordination CLI provides `aide review` for the current repository and `aide task review <task-id>` to resolve and review a task workspace. Both launch the same independent tool with its existing state, backing agent, browser UI, and feedback output. No project registration or dashboard is required for standalone/current-repository review. Starting a review does not complete a task or automatically hand feedback to its implementation conversation. Historical `review` command examples below now refer to `aide-review`. Existing saved review state remains compatible.
+
 ## Empty conclusion and editor refinements — 2026-10-22
 
 Feedback from `review-feedback-0c8b7c7f-a6c5-4af3-b1a6-258ecfb306b8.md` and the follow-up instruction:
@@ -14,7 +18,7 @@ Verification: 31 Rust tests and 24 headless browser tests pass, along with forma
 
 Feedback from `review-feedback-4963cc72-342d-4b62-8732-1c068e6bc380.md`:
 
-- Replace the decorative D mark with an accessible chat-panel toggle beside the DevDeck name. Keep pending agent requests visible in the header.
+- Replace the decorative D mark with an accessible chat-panel toggle beside the Aide name. Keep pending agent requests visible in the header.
 - Give inline feedback a wider right margin that reaches the page edge. Comments and their composers fill that margin with flat backgrounds, without card borders, rounded corners, shadows, or outer horizontal gutters. Retain vertical anchoring and overlap handling.
 - Group `UiState` into chat, document, and feedback state. Keep shared disclosure state and native request drafts at the top level. This is an internal organisation change; resume behavior remains the same, and no legacy-state migration is added during development.
 
@@ -38,7 +42,7 @@ Implemented and verified: 30 Rust tests and 20 headless browser tests pass, alon
 
 Product plan and implementation handover for the first working milestone. Rust/Axum, Leptos CSR, SQLite, WebSocket application communication, and native Codex app-server integration are implemented. Milestone 2 remains open for reconsideration after using milestone 1. The implementation progress section records current decisions and verification; protocol comparisons below retain the planning research. Works independently of the companion [coordination workbench](COORDINATION_PLAN.md).
 
-**Repository:** this tool belongs to the DevDeck Cargo monorepo alongside the coordination workbench described in `COORDINATION_PLAN.md`. Both tools live in one Cargo workspace and remain independently usable. Exact crate boundaries are an implementation detail; agent integration and other common code can be shared where useful.
+**Repository:** this tool belongs to the Aide Cargo monorepo alongside the coordination workbench described in `COORDINATION_PLAN.md`. Both tools live in one Cargo workspace and remain independently usable. Exact crate boundaries are an implementation detail; agent integration and other common code can be shared where useful.
 
 ## Purpose and user
 

@@ -8,3 +8,5 @@ review.sqlite*
 review-feedback-*.md
 
 __pycache__/
+/dist-aide/
+.aide/

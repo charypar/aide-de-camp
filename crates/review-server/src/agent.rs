@@ -69,7 +69,7 @@ impl Agent {
             sequence: AtomicU64::new(1),
             child: Mutex::new(child),
         });
-        agent.call("initialize",json!({"clientInfo":{"name":"devdeck_review","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
+        agent.call("initialize",json!({"clientInfo":{"name":"aide_review","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
         agent
             .write(json!({"method":"initialized","params":{}}))
             .await?;

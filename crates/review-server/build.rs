@@ -10,7 +10,7 @@ fn main() {
         if env::var("PROFILE").as_deref() == Ok("release") {
             panic!("Build the UI before installing: run just install");
         }
-        fs::write(output.join("index.html"),"<!doctype html><title>DevDeck</title><p>Build the browser UI with <code>just build-ui</code>, then rebuild the server.</p>").unwrap();
+        fs::write(output.join("index.html"),"<!doctype html><title>Aide</title><p>Build the browser UI with <code>just build-ui</code>, then rebuild the server.</p>").unwrap();
     }
 }
 fn copy(from: &Path, to: &Path) {

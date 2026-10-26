@@ -1,6 +1,6 @@
-# Working in DevDeck
+# Working in Aide
 
-- Read the relevant product plan before working: `REVIEW_PLAN.md` for guided review, `COORDINATION_PLAN.md` for the companion workbench. Keep plans current as decisions settle. The tools belong to one Cargo workspace and remain independently usable.
+- Read the relevant product plan before working: `plans/REVIEW_PLAN.md` for guided review, `plans/COORDINATION_PLAN.md` for the companion workbench. Keep plans current as decisions settle. The tools belong to one Cargo workspace and remain independently usable.
 - Make routine implementation choices autonomously and document useful defaults. Ask for input when a finding materially changes the agreed experience, scope, or feasibility. Keep discussion succinct and high-level; discuss options before changing product direction.
 - Write meaningful automated tests alongside implementation. Cover observable behavior, persistence, protocol boundaries, and failure/recovery paths; add regression coverage for bugs. Run the relevant tests and checks before considering work complete.
 - Use headless Playwright MCP for browser acceptance testing against the running application. Exercise real selection, chat, feedback, and restoration flows against the plan's acceptance criteria. This complements automated development tests. Use controlled harness fixtures for repeatable edge cases and live Codex integration checks for native session/configuration/MCP behavior. Report what was actually verified and any remaining gaps.

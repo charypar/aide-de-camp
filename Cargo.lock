@@ -12,6 +12,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "aide-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "aide-server"
+version = "0.1.0"
+dependencies = [
+ "aide-core",
+ "anyhow",
+ "axum",
+ "clap",
+ "fs2",
+ "futures-util",
+ "libc",
+ "mime_guess",
+ "rusqlite",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+ "webbrowser",
+]
+
+[[package]]
+name = "aide-ui"
+version = "0.1.0"
+dependencies = [
+ "aide-core",
+ "console_error_panic_hook",
+ "gloo-timers",
+ "leptos",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

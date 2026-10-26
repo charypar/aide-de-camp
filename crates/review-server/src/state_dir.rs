@@ -4,11 +4,40 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const OWNER: &str = "DevDeck review state\n";
+const OWNER: &str = "Aide review state\n";
+// Existing reviews must remain resumable after the project rename.
+const LEGACY_OWNER: &str = "DevDeck review state\n";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creates_state_with_current_brand() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = StateDirectory::ensure(temp.path()).unwrap();
+        assert_eq!(fs::read_to_string(path.join("owner")).unwrap(), OWNER);
+    }
+
+    #[test]
+    fn resumes_and_cleans_up_current_and_legacy_state() {
+        for owner in [OWNER, LEGACY_OWNER] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = StateDirectory::path(temp.path());
+            fs::create_dir(&path).unwrap();
+            fs::write(path.join("owner"), owner).unwrap();
+            fs::write(StateDirectory::database(temp.path()), "saved review").unwrap();
+
+            assert_eq!(StateDirectory::ensure(temp.path()).unwrap(), path);
+            assert_eq!(
+                fs::read_to_string(StateDirectory::database(temp.path())).unwrap(),
+                "saved review"
+            );
+
+            StateDirectory::remove(temp.path()).unwrap();
+            assert!(!path.exists());
+        }
+    }
 
     #[test]
     fn refuses_to_adopt_or_remove_an_unowned_directory() {
@@ -62,11 +91,12 @@ impl StateDirectory {
     }
 
     fn verify(path: &Path) -> Result<()> {
+        let owner = fs::read_to_string(path.join("owner")).ok();
         if !fs::symlink_metadata(path)?.is_dir()
-            || fs::read_to_string(path.join("owner")).ok().as_deref() != Some(OWNER)
+            || !matches!(owner.as_deref(), Some(OWNER | LEGACY_OWNER))
         {
             bail!(
-                "{} is not a DevDeck state directory; move it aside before starting a review",
+                "{} is not an Aide state directory; move it aside before starting a review",
                 path.display()
             );
         }
