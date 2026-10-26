@@ -90,3 +90,7 @@ test-aide-protocol:
 # Exercise native terminal conversation, fish environment, and restart recovery (two model turns).
 test-aide-live: build
     python3 tests/aide-live.py
+
+# Check status becomes idle after detaching a real terminal mid-turn (one model turn).
+test-aide-detached-status: build
+    python3 tests/aide-live.py --detached-status

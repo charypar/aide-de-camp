@@ -1,3 +1,22 @@
-#!/bin/sh
+#!/usr/bin/env python3
 # Browser tests exercise the launch action without opening a GUI window.
-exit 0
+import json
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+log = os.environ.get('AIDE_FIXTURE_ALACRITTY_LOG')
+if log:
+    with open(log, 'a') as output:
+        output.write(json.dumps({
+            'args': args,
+            'tmux': os.environ.get('TMUX'),
+            'pane': os.environ.get('TMUX_PANE'),
+            'socket': os.environ.get('ALACRITTY_SOCKET'),
+        }) + '\n')
+
+if args[:2] == ['msg', 'create-window']:
+    unavailable = os.environ.get('AIDE_FIXTURE_ALACRITTY_UNAVAILABLE')
+    if (unavailable and Path(unavailable).exists()) or os.environ.get('ALACRITTY_SOCKET') == '/fixture/stale.sock':
+        sys.exit(1)

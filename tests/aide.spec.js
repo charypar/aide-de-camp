@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync, realpathSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {spawn, execFileSync} from 'node:child_process';
 
@@ -31,10 +31,10 @@ test('task creation, native status, focus, confirmation and retained history',as
   await page.goto(server.url);await expect(page.getByRole('button',{name:'Cat Herder',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'New task'}).click();await expect(page.getByRole('combobox',{name:'Repository'})).toHaveValue('repo');await page.getByLabel('Task ID').fill('bad task');expect(await page.getByLabel('Task ID').evaluate(el=>el.checkValidity())).toBe(false);await page.getByLabel('Task ID').fill('task-1234');await page.getByRole('button',{name:'Start and open Codex'}).click();
   const row=taskRow(page,'task-1234');await expect(row).toBeVisible();await row.getByRole('button',{name:/task-1234/}).click();
-  await expect(row).toContainText('Fixture conversation',{timeout:25000});await expect(row).toContainText('Conversation idle');
+  await expect(row).toContainText('Fixture conversation',{timeout:25000});await expect(row.locator('.task-status')).toHaveAttribute('title','Conversation idle');
   const workspace=join(f.root,'repo-tasks','task-1234');expect(readFileSync(join(workspace,'hello.txt'),'utf8')).toBe('trunk\n');
   writeFileSync(join(workspace,'.fixture-status'),JSON.stringify({type:'active',activeFlags:['waitingOnApproval']}));
-  await expect(page.getByRole('heading',{name:'Requires attention'})).toBeVisible();await expect(row).toContainText('Codex needs your input');
+  await expect(page.getByRole('heading',{name:'Requires attention'})).toBeVisible();await expect(row.locator('.task-status')).toHaveAttribute('title',/Codex needs your input/);
   await page.getByRole('button',{name:'Cat Herder',exact:true}).click();await expect(row).toBeVisible();
   // A status transition may remount the row in another group.
   if(!await row.getByRole('button',{name:'Close task'}).isVisible())await row.getByRole('button',{name:/task-1234/}).click();
@@ -89,6 +89,58 @@ test('repository defaults and selection survive refreshes; the full task title t
  }finally{await stop(server);cleanup(f);}
 });
 
+test('collapsed tasks show the summary, ID label and coloured status on one line',async({page})=>{
+ const f=fixture();const server=await manager(f);
+ try{
+  const id='task-compact';
+  f.run(binary,['task','start',id,'--workspace-only']);
+  await page.goto(server.url);
+  const row=taskRow(page,id),summary=row.locator('.task-summary'),badge=row.locator('.task-status');
+  await expect(summary).toHaveText('Untitled task');
+  await expect(row.locator('.task-id')).toHaveText(id);
+  await expect(badge).toHaveText('Ready');
+  await expect(row.locator('.details')).toHaveCount(0);
+  const workspace=join(f.root,'repo-tasks',id);
+  const text='Improve search navigation and preserve the selected result when returning from another task';
+  writeFileSync(join(workspace,'.fixture-summary'),text);
+  f.run(binary,['task','recover',id]);
+  f.run(binary,['task','attach',id,'--new-window']);
+  await expect(summary).toHaveText(text);
+  await expect(summary).toHaveAttribute('title',text);
+  const colours=new Set();
+  for(const [status,label,value] of [
+   ['working','Working',{type:'active',activeFlags:[]}],
+   ['attention','Requires attention',{type:'active',activeFlags:['waitingOnApproval']}],
+   ['waiting','Ready',{type:'idle'}],
+  ]){
+   writeFileSync(join(workspace,'.fixture-status'),JSON.stringify(value));
+   await expect(badge).toHaveAttribute('data-status',status);
+   await expect(badge).toHaveText(label);
+   colours.add(await badge.evaluate(el=>getComputedStyle(el).backgroundColor));
+   expect((await row.boundingBox()).height).toBeLessThanOrEqual(60);
+  }
+  expect(colours.size).toBe(3);
+  await page.setViewportSize({width:390,height:844});
+  expect((await row.boundingBox()).height).toBeLessThanOrEqual(60);
+  expect(await summary.evaluate(el=>el.scrollWidth>el.clientWidth)).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  const title=row.getByRole('button',{name:new RegExp(id)});
+  await title.click();
+  await expect(row.locator('.expanded-summary')).toHaveText(text);
+  await expect(row.locator('.reason')).toHaveText('Conversation idle');
+  await expect(row.locator('.repo')).toHaveText('repo');
+  await title.press('Enter');await expect(row.locator('.details')).toHaveCount(0);
+  await title.press('Space');
+  page.once('dialog',d=>d.accept());await row.getByRole('button',{name:'Close task'}).click();
+  await expect(row).toHaveCount(0);
+  await page.getByLabel('Show completed').check();
+  await expect(badge).toHaveText('Completed');
+  await expect(badge).toHaveAttribute('data-status','completed');
+  expect(colours.has(await badge.evaluate(el=>getComputedStyle(el).backgroundColor))).toBe(false);
+  await expect(row.getByRole('button',{name:'Open terminal'})).toHaveCount(0);
+ }finally{await stop(server);cleanup(f);}
+});
+
 test('dashboard loss preserves terminals; reboot-equivalent recovery resumes same conversation idle',async({page})=>{
  const f=fixture();let server=await manager(f);
  try{
@@ -103,7 +155,7 @@ test('dashboard loss preserves terminals; reboot-equivalent recovery resumes sam
   server=await manager(f);await page.goto(server.url);await expect(row).toContainText('Fixture conversation');
   expect(f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'display-message','-p','-t',session,'#{pane_pid}']).trim()).toBe(pid);
   await stop(server);f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'kill-session','-t',session]);
-  server=await manager(f);await page.goto(server.url);await expect(row).toContainText('Recovered conversation',{timeout:25000});await expect(row).toContainText('Fixture conversation',{timeout:25000});
+  server=await manager(f);await page.goto(server.url);await expect(row.locator('.task-status')).toHaveAttribute('title',/Recovered conversation/,{timeout:25000});await expect(row).toContainText('Fixture conversation',{timeout:25000});
   await row.getByRole('button',{name:/restore-me/}).click();await expect(row.locator('dd').first()).toHaveText(thread);
  }finally{await stop(server);cleanup(f);}
 });
@@ -118,6 +170,46 @@ test('review entry points forward options and task workspace without a manager',
   expect(()=>f.run(binary,['task','cleanup','review-me'])).toThrow();
   expect(existsSync(join(f.root,'repo-tasks','review-me'))).toBe(true);
  }finally{cleanup(f);}
+});
+
+test('terminal windows reuse Alacritty, rediscover stale sockets, and fall back when IPC is unavailable',async({page})=>{
+ const f=fixture(),log=join(f.dir,'alacritty.jsonl'),unavailable=join(f.dir,'alacritty-unavailable');
+ f.env.AIDE_FIXTURE_ALACRITTY_LOG=log;
+ f.env.AIDE_FIXTURE_ALACRITTY_UNAVAILABLE=unavailable;
+ delete f.env.ALACRITTY_SOCKET;
+ const server=await manager(f);
+ const calls=()=>existsSync(log)?readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)):[];
+ try{
+  f.run(binary,['task','start','window-test','--workspace-only']);
+  f.run(binary,['task','recover','window-test']);
+  await page.goto(server.url);
+  const row=taskRow(page,'window-test');await expect(row).toContainText('Fixture conversation');
+  // The dashboard and CLI use the same launcher; successful IPC must not spawn.
+  await row.getByRole('button',{name:'Open terminal'}).click();
+  await expect(page.getByRole('status')).toContainText('Opened terminal');
+  expect(calls()).toHaveLength(1);
+  const session=runtimeTools(f,'window-test').session;
+  const windowArgs=['--title','Aide · window-test','--working-directory',realpathSync(join(f.root,'repo-tasks','window-test')),'-e',realpathSync(execFileSync('which',['env'],{encoding:'utf8'}).trim()),'-u','TMUX','-u','TMUX_PANE',realpathSync(execFileSync('which',['tmux'],{encoding:'utf8'}).trim()),'-L',f.env.AIDE_TMUX_SOCKET,'attach-session','-t',session];
+  expect(calls()[0].args).toEqual(['msg','create-window',...windowArgs]);
+
+  f.env.TMUX='inherited-client';f.env.TMUX_PANE='%999';f.env.ALACRITTY_SOCKET='/fixture/stale.sock';
+  f.run(binary,['task','attach','window-test','--new-window']);
+  expect(calls()).toHaveLength(3);
+  expect(calls()[1].socket).toBe('/fixture/stale.sock');
+  expect(calls()[2].socket).toBeNull();
+  expect(calls()[2].args).toEqual(['msg','create-window',...windowArgs]);
+
+  delete f.env.ALACRITTY_SOCKET;
+  writeFileSync(unavailable,'no running instance');
+  f.run(binary,['task','attach','window-test','--new-window']);
+  await expect.poll(()=>calls().length).toBe(5);
+  expect(calls()[3].args).toEqual(['msg','create-window',...windowArgs]);
+  expect(calls()[4].args).toEqual(windowArgs);
+  for(const call of calls()){
+   expect(call.tmux).toBeNull();expect(call.pane).toBeNull();
+  }
+  expect(f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'has-session','-t',session])).toBe('');
+ }finally{await stop(server);cleanup(f);}
 });
 
 async function closeInTerminal(f,id,answer){
@@ -245,7 +337,7 @@ test('ambiguous initial conversations require attention instead of choosing one'
   writeFileSync(join(f.root,'repo-tasks','ambiguous','.fixture-other-thread'),'yes');
   f.run(binary,['task','recover','ambiguous']);
   await page.goto(server.url);const row=taskRow(page,'ambiguous');
-  await expect(row).toContainText('Multiple conversations found',{timeout:15000});
+  await expect(row.locator('.task-status')).toHaveAttribute('title',/Multiple conversations found/,{timeout:15000});
   await row.getByRole('button',{name:/ambiguous/}).click();
   await expect(row.locator('dd').first()).toHaveText('Not started');
  }finally{await stop(server);cleanup(f);}
@@ -275,7 +367,7 @@ test('slow repository work leaves one dashboard responsive; shared repo and task
   // Cleanup holds its task lock while waiting for shared VCS access.
   await healthy.getByRole('button',{name:/healthy/}).click();
   page.once('dialog',d=>d.accept());await healthy.getByRole('button',{name:'Close task'}).click();
-  await expect(healthy).toContainText('Closing');
+  await expect(healthy.locator('.task-status')).toHaveAttribute('title',/Closing/);
   expect(()=>f.run(binary,['task','attach','healthy','--new-window'])).toThrow(/busy/);
   await page.reload();await expect(taskRow(page,'fast')).toContainText('Fixture conversation');
   unlinkSync(join(gates,'repo.hold'));

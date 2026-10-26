@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Opt-in native Codex/tmux acceptance check using disposable repositories.
-Uses the configured Codex account for two small turns; never edits user repositories.
+Uses the configured Codex account for two small turns (one with --detached-status);
+never edits user repositories.
 """
 import json
 import os
@@ -16,6 +17,7 @@ import sys
 
 BINARY = Path(__file__).resolve().parents[1] / 'target/debug/aide'
 resume_only = '--resume-only' in sys.argv
+detached_status = '--detached-status' in sys.argv
 base = Path(sys.argv[sys.argv.index('--resume-only') + 1]) if resume_only else Path(tempfile.mkdtemp(prefix='aide-native-', dir='/tmp'))
 root = base / 'Project'
 root.mkdir(exist_ok=True)
@@ -29,6 +31,7 @@ wrapper.chmod(0o755)
 env['AIDE_CODEX'] = str(wrapper)
 manager = None
 session = None
+attached_client = None
 
 def run(*args, cwd=root):
     return subprocess.check_output([str(a) for a in args], cwd=cwd, env=env, text=True, stderr=subprocess.STDOUT).strip()
@@ -54,6 +57,22 @@ def tmux(*args):
 
 def managed_pane(role):
     return tmux('show-options', '-qv', '-t', session, '@aide-' + role)
+
+def native_ui_processes():
+    # pane_current_command can report the parent fish shell on macOS even when
+    # Codex is running. Track the native UI process beneath the work pane instead.
+    processes = []
+    for line in subprocess.check_output(['ps', '-axo', 'pid,ppid,comm'], text=True).splitlines()[1:]:
+        fields = line.strip().split(None, 2)
+        if len(fields) == 3:
+            processes.append((int(fields[0]), int(fields[1]), fields[2]))
+    descendants = {int(tmux('display-message', '-p', '-t', managed_pane('work'), '#{pane_pid}'))}
+    while True:
+        children = {pid for pid, parent, _ in processes if parent in descendants}
+        if children <= descendants:
+            break
+        descendants |= children
+    return {pid for pid, _, name in processes if pid in descendants and 'codex' in name.lower()}
 
 def capture():
     return tmux('capture-pane', '-p', '-t', managed_pane('work'))
@@ -125,11 +144,35 @@ try:
         run(BINARY, 'task', 'recover', 'native-check')
         session = 'aide-' + task()['key']
         wait(ready)
+        if detached_status:
+            # A real terminal client, but no GUI or changes to user sessions.
+            client_log = open(base / 'attached-client.log', 'w')
+            attached_client = subprocess.Popen(
+                ['python3', str(BINARY.parents[2] / 'tests/aide-pty.py'), BINARY, 'task', 'attach', 'native-check'],
+                cwd=root, env={**{k:v for k,v in env.items() if k not in ('TMUX', 'TMUX_PANE')}, 'TERM': 'xterm-256color'},
+                stdin=subprocess.PIPE, stdout=client_log, stderr=client_log,
+            )
+            wait(lambda: tmux('list-clients', '-t', session))
+            print('Detached-status dashboard:', json.loads((base / 'home/manager.json').read_text())['url'], flush=True)
         print('Native terminal ready; sending the test turn.', flush=True)
         prompt('Run the shell command sleep 12, then reply with exactly AIDE_LIVE_CHECK_OK. Do not modify files or use network tools.')
         wait(lambda: task()['thread_id'], timeout=90)
         identity = task()['thread_id']
         wait(lambda: tool_called('sleep 12'), timeout=90)
+        if detached_status:
+            wait(lambda: '\tWorking\t' in run(BINARY, 'task', 'list'))
+            native_ui = native_ui_processes()
+            assert native_ui, 'Expected a native Codex UI beneath the work pane'
+            tmux('detach-client', '-s', session)
+            attached_client.wait(timeout=10)
+            assert not tmux('list-clients', '-t', session)
+            print('Detached while working; waiting for completion without reattaching.', flush=True)
+            wait(lambda: assistant_said('AIDE_LIVE_CHECK_OK'), timeout=180)
+            wait(lambda: '\tWaiting\tConversation idle\t' in run(BINARY, 'task', 'list'), timeout=30)
+            assert native_ui <= native_ui_processes(), 'Detaching stopped the native Codex UI'
+            assert not tmux('list-clients', '-t', session)
+            print('Detached status passed: Working -> Waiting with Codex UI alive and no attached clients. Artifacts:', base, flush=True)
+            sys.exit(0)
         keys('C-d')
         wait(lambda: tmux('display-message', '-p', '-t', managed_pane('work'), '#{pane_current_command}') == 'fish')
         wait(lambda: assistant_said('AIDE_LIVE_CHECK_OK'), timeout=180)
@@ -139,15 +182,17 @@ try:
         wait(ready)
         print('Native conversation persisted a completed turn.', flush=True)
         if '--window' in sys.argv:
-            terminal = subprocess.Popen(['alacritty', '--title', 'Aide acceptance test', '--working-directory', task()['workspace'], '-e', 'tmux', '-L', base.name, 'attach-session', '-t', session], env={k:v for k,v in env.items() if k not in ('TMUX','TMUX_PANE')}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
+                run(BINARY, 'task', 'attach', 'native-check', '--new-window')
                 wait(lambda: tmux('list-clients', '-t', session))
-                terminal.terminate()
-                terminal.wait(timeout=10)
+                # Close only this test's clients; Alacritty may also own the
+                # user's windows now that the launcher reuses its process.
+                tmux('detach-client', '-s', session)
+                wait(lambda: not tmux('list-clients', '-t', session))
                 assert tmux('has-session', '-t', session) == ''
                 print('Dedicated Alacritty window attached; closing it preserved the task.', flush=True)
             finally:
-                if terminal.poll() is None: terminal.terminate()
+                tmux('detach-client', '-s', session)
     
         keys('C-d')
         wait(lambda: tmux('display-message', '-p', '-t', session, '#{pane_current_command}') == 'fish')
@@ -189,6 +234,9 @@ try:
     print('Restart restored the same conversation, idle and requiring attention; native recording retained.', flush=True)
     print('Native acceptance passed. Artifacts:', base, flush=True)
 finally:
+    if attached_client and attached_client.poll() is None:
+        attached_client.terminate()
+        attached_client.wait(timeout=10)
     if session:
         try:
             print('Final test terminal:', capture()[-3000:], flush=True)

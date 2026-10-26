@@ -9,7 +9,6 @@ use serde_json::json;
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     time::Duration,
 };
 
@@ -119,25 +118,7 @@ impl Runtime {
         project.update(&task.id, |t| t.recovered = false)?;
         let target = task.session();
         if new_window {
-            let mut terminal = Command::new("alacritty");
-            terminal.env_remove("TMUX").env_remove("TMUX_PANE").args([
-                "--title",
-                &format!("Aide · {}", task.id),
-                "--working-directory",
-                &task.workspace,
-                "-e",
-                "tmux",
-            ]);
-            if let Some(socket) = std::env::var_os("AIDE_TMUX_SOCKET") {
-                terminal.arg("-L").arg(socket);
-            }
-            terminal
-                .args(["attach-session", "-t", &target])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .context("Open Alacritty")?;
+            crate::terminal::Terminal::new(self, project, &task).open_window()?;
         } else if std::env::var_os("TMUX").is_some() {
             self.tmux(&["switch-client", "-t", &target])?;
         } else {

@@ -62,7 +62,7 @@ Starting fetches the repository, creates a colocated jj/Git workspace from `trun
 
 The dashboard must be running to start or repair managed task sessions. For just a workspace, use `aide task start task-1234 --workspace-only`; this needs no dashboard and starts no agent.
 
-`--new-window` opens a dedicated Alacritty window. Without it, start/attach uses the current terminal, switching sessions if you are already inside tmux. **Ctrl-b then d**, `aide task detach`, or closing the dedicated terminal window detaches and leaves the task running. Attaching to a healthy task works without the dashboard.
+`--new-window` opens a dedicated window in the existing Alacritty app using its IPC interface, keeping task windows together in the macOS Dock and app switcher. If no instance is reachable, Aide starts Alacritty. Without `--new-window`, start/attach uses the current terminal, switching sessions if you are already inside tmux. **Ctrl-b then d**, `aide task detach`, or closing the dedicated terminal window detaches and leaves the task running. Attaching to a healthy task works without the dashboard.
 
 When ready, review the changes and publish your work manually. Then close the task from the dashboard or CLI:
 
@@ -175,6 +175,6 @@ just test-browser             # Headless browser tests for both tools
 just build                    # Build both tools with embedded browser assets
 ```
 
-Live integration checks use your configured Codex account and MCPs: `just test-live` checks review, `just test-aide-protocol` checks task observation without a model prompt, and `just test-aide-live` checks native task conversations and recovery. Checks that send model prompts may incur normal usage charges.
+Live integration checks use your configured Codex account and MCPs: `just test-live` checks review, `just test-aide-protocol` checks task observation without a model prompt, and `just test-aide-live` checks native task conversations and recovery. `just test-aide-detached-status` checks that a working task becomes idle after detaching its terminal, using one short model turn. Checks that send model prompts may incur normal usage charges.
 
 See the [coordination plan](plans/COORDINATION_PLAN.md) and [review plan](plans/REVIEW_PLAN.md) for scope, implementation decisions, and verification status.

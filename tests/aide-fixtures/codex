@@ -79,6 +79,8 @@ if args and args[0]=='app-server':
                     t=dict(selected or {})
                     control=Path(os.getcwd())/'.fixture-status'
                     if control.exists():t['status']=json.loads(control.read_text())
+                    summary=Path(os.getcwd())/'.fixture-summary'
+                    if summary.exists():t['name']=summary.read_text()
                     result={'thread':t}
                 elif method=='mcpServerStatus/list':result={'data':[]}
                 else:error={'message':'Unexpected request '+str(method)}

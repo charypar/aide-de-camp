@@ -3,6 +3,7 @@ use aide_core::{Environment, Task};
 use anyhow::{Context, Result, bail};
 use std::{
     io::Write,
+    os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::{Command, Stdio},
 };
@@ -43,6 +44,66 @@ impl Terminal {
             task: task.clone(),
         }
     }
+
+    pub fn open_window(&self) -> Result<()> {
+        let mut request = self.window_command(true)?;
+        let mut opened = request.status().context("Contact Alacritty")?.success();
+
+        // A long-lived manager may inherit a socket from an instance that has
+        // since exited. Let Alacritty discover another instance before spawning.
+        if !opened && std::env::var_os("ALACRITTY_SOCKET").is_some() {
+            opened = request
+                .env_remove("ALACRITTY_SOCKET")
+                .status()
+                .context("Find a running Alacritty instance")?
+                .success();
+        }
+
+        if !opened {
+            self.window_command(false)?
+                .spawn()
+                .context("Open Alacritty")?;
+        }
+        Ok(())
+    }
+
+    fn window_command(&self, reuse: bool) -> Result<Command> {
+        // A Dock-launched instance may not have Homebrew on its PATH. Resolve
+        // the attachment tools here, where the task's tmux commands already work.
+        let tmux = executable("tmux")?;
+        let env = executable("env")?;
+        let mut command = Command::new("alacritty");
+        command.env_remove("TMUX").env_remove("TMUX_PANE");
+        if reuse {
+            command.args(["msg", "create-window"]);
+        }
+        command.args([
+            "--title",
+            &format!("Aide · {}", self.task.id),
+            "--working-directory",
+            &self.task.workspace,
+            "-e",
+        ]);
+        command.arg(env).args([
+            // IPC windows inherit the existing Alacritty process's environment,
+            // not this request's. Clear tmux client context in the window too.
+            "-u",
+            "TMUX",
+            "-u",
+            "TMUX_PANE",
+        ]);
+        command.arg(tmux);
+        if let Some(socket) = std::env::var_os("AIDE_TMUX_SOCKET") {
+            command.arg("-L").arg(socket);
+        }
+        command.args(["attach-session", "-t", &self.task.session()]);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        Ok(command)
+    }
+
     pub fn command() -> Command {
         let mut command = Command::new("tmux");
         if let Some(socket) = std::env::var_os("AIDE_TMUX_SOCKET") {
@@ -287,6 +348,20 @@ impl Terminal {
         Self::run(&["select-window", "-t", &pane])?;
         Ok(())
     }
+}
+
+fn executable(name: &str) -> Result<PathBuf> {
+    let path = std::env::var_os("PATH").context("PATH is not set")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join(name))
+        .find(|candidate| {
+            candidate
+                .metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
+        .with_context(|| format!("Cannot find {name} on PATH"))?
+        .canonicalize()
+        .with_context(|| format!("Resolve {name} executable"))
 }
 
 pub fn environment() -> Result<Environment> {

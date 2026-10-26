@@ -77,7 +77,7 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
                 <button class="primary" type="submit" disabled=move || !cx.connected.get() || selected_repository.get().is_empty()>"Start and open Codex"</button>
             </form></Show>
             <p class="error">{move || project.get().and_then(|p| p.error)}</p>
-            { [Status::Attention, Status::Working, Status::Waiting, Status::Completed].into_iter().map(move |status| {
+            { [Status::Attention, Status::Waiting, Status::Working, Status::Completed].into_iter().map(move |status| {
                 let group = status.clone();
                 let list = Memo::new(move |_| project.get().map(|p| p.tasks.into_iter().filter(|t| t.status == group && (completed.get() || t.task.lifecycle != Lifecycle::Completed)).map(|t| t.task.id).collect::<Vec<_>>()).unwrap_or_default());
                 view! { <Show when=move || !list.get().is_empty()><h3>{label(&status)}</h3><For each=move || list.get() key=|id| id.clone() children={move |id| view!{<Task root=root.get_value() id=id/>}}/></Show> }
@@ -100,6 +100,12 @@ fn Task(root: String, id: String) -> impl IntoView {
             .and_then(|p| p.tasks.into_iter().find(|t| t.task.id == id.get_value()))
     });
     let expanded = RwSignal::new(false);
+    let summary = Memo::new(move |_| {
+        task.get()
+            .and_then(|t| t.summary)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Untitled task".into())
+    });
     let toggle = move |_| expanded.update(|v| *v = !*v);
     let attach = move |_| {
         cx.send(Command::Attach {
@@ -172,14 +178,21 @@ fn Task(root: String, id: String) -> impl IntoView {
         <article class="task">
             <div class="task-heading"><button class="task-title" on:click=toggle aria-expanded=move || expanded.get().to_string()>
                 <span class="chevron" aria-hidden="true">{move || if expanded.get() { "▾" } else { "▸" }}</span>
-                <span class="task-id">{id.get_value()}</span><span class="repo">{move || task.get().map(|t| t.task.repository)}</span>
+                <span class="task-summary" title=move || summary.get()>{move || summary.get()}</span>
+                <span class="task-id" title=id.get_value()>{id.get_value()}</span>
+                <span class="task-status" data-status=move || task.get().map(|t| status_name(&t.status)) title=move || task.get().map(|t| t.reason)>
+                    {move || task.get().map(|t| label(&t.status))}
+                </span>
             </button>
-                <Show when=is_open><button on:click=attach disabled=move || !cx.connected.get()>"Open terminal"</button></Show>
+                <Show when=is_open><button class="terminal-action" aria-label="Open terminal" title="Open terminal" on:click=attach disabled=move || !cx.connected.get()>
+                    <span class="terminal-label">"Open terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span>
+                </button></Show>
             </div>
-            <p class="reason">{move || task.get().map(|t| t.reason)}</p>
-            <p class="summary">{move || task.get().and_then(|t| t.summary)}</p>
             <Show when=move || expanded.get()>
-                <div class="details"><code>{move || task.get().map(|t| t.task.workspace)}</code><button on:click=copy_path>"Copy path"</button>
+                <div class="details">
+                    <p class="expanded-summary">{move || summary.get()}</p>
+                    <p class="task-context"><span class="repo">{move || task.get().map(|t| t.task.repository)}</span><span class="reason">{move || task.get().map(|t| t.reason)}</span></p>
+                    <code>{move || task.get().map(|t| t.task.workspace)}</code><button on:click=copy_path>"Copy path"</button>
                     <dl><dt>"Conversation"</dt><dd>{move || task.get().and_then(|t| t.task.thread_id).unwrap_or_else(|| "Not started".into())}</dd><dt>"Recording"</dt><dd>{move || task.get().and_then(|t| t.task.recording).unwrap_or_else(|| "Not recorded yet".into())}</dd></dl>
                     <Show when=is_open><div class="actions"><button on:click=editor>"Open Zed"</button><button on:click=review>"Review"</button><button on:click=recover>"Recover session"</button><button class="danger" on:click=cleanup>"Close task"</button></div></Show>
                 </div>
@@ -187,11 +200,21 @@ fn Task(root: String, id: String) -> impl IntoView {
         </article>
     }
 }
+
+fn status_name(status: &Status) -> &'static str {
+    match status {
+        Status::Attention => "attention",
+        Status::Working => "working",
+        Status::Waiting => "waiting",
+        Status::Completed => "completed",
+    }
+}
+
 fn label(status: &Status) -> &'static str {
     match status {
         Status::Attention => "Requires attention",
         Status::Working => "Working",
-        Status::Waiting => "Waiting",
+        Status::Waiting => "Ready",
         Status::Completed => "Completed",
     }
 }
