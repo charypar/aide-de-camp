@@ -49,6 +49,7 @@ impl Manager {
         }
     }
     pub async fn snapshot(&self) -> Vec<ProjectView> {
+        let activity = crate::activity::ActivitySnapshot::capture().await;
         let mut projects = Vec::new();
         for root in self.home.roots().unwrap_or_default() {
             let name = Path::new(&root)
@@ -68,10 +69,17 @@ impl Manager {
                     (Ok(repositories), Ok(tasks)) => {
                         view.repositories = repositories;
                         view.tasks = futures_util::stream::iter(tasks)
-                            .map(|t| self.runtime.view(t))
+                            .map(|t| async {
+                                let mut view = self.runtime.view(t).await;
+                                view.terminal_activity = activity.for_task(&view.task);
+                                view
+                            })
                             .buffered(8)
                             .collect()
                             .await;
+                        for task in &mut view.tasks {
+                            Runtime::refresh_lifecycle(&project, task);
+                        }
                     }
                     (Err(e), _) | (_, Err(e)) => view.error = Some(e.to_string()),
                 },

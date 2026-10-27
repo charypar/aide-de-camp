@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Controlled native-protocol fixture. No model or network calls."""
-import base64, hashlib, json, os, signal, socket, struct, sys, threading, time
+import base64, hashlib, json, os, signal, socket, struct, subprocess, sys, threading, time
 from pathlib import Path
 
 def frame(conn, value, masked=False):
@@ -98,5 +98,10 @@ else:
     else:response=call(2,'thread/start',{})
     print('Fixture Codex conversation ready',flush=True)
     # Ctrl-D/EOF returns to the real fish shell; normal commands are not run.
-    for line in sys.stdin:
-        print('Fixture input: '+line.strip(),flush=True)
+    child=subprocess.Popen(['sleep','120']) if os.environ.get('AIDE_FIXTURE_UI_CHILD') else None
+    try:
+        for line in sys.stdin:
+            print('Fixture input: '+line.strip(),flush=True)
+    finally:
+        if child:
+            child.terminate();child.wait()

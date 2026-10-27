@@ -50,6 +50,42 @@ test('task creation, native status, focus, confirmation and retained history',as
  }finally{await stop(server);cleanup(f);}
 });
 
+test('closing retains its title without attention, and interrupted cleanup can be retried',async({page})=>{
+ const f=fixture(),gate=join(f.dir,'cleanup.hold');
+ f.env.AIDE_FIXTURE_CLEANUP_GATE=gate;
+ const server=await manager(f);
+ try{
+  f.run(binary,['task','start','closing','--workspace-only']);
+  f.run(binary,['task','recover','closing']);
+  f.run(binary,['task','attach','closing','--new-window']);
+  await page.goto(server.url);
+  const row=taskRow(page,'closing');
+  await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
+  await row.getByRole('button',{name:/closing/}).click();
+  writeFileSync(gate,'hold');writeFileSync(join(f.dir,'cleanup.fail'),'fail');
+  page.once('dialog',d=>d.accept());await row.getByRole('button',{name:'Close task'}).click();
+  await expect.poll(()=>existsSync(join(f.dir,'cleanup.entered'))).toBe(true);
+  await expect(row.locator('.task-status')).toHaveText('Closing');
+  await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
+  await expect(page).toHaveTitle('Aide de camp');
+  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toHaveCount(0);
+  await page.reload();
+  await expect(row.locator('.task-status')).toHaveText('Closing');
+  await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
+  unlinkSync(gate);
+  await expect(row.locator('.task-status')).toHaveText('Requires attention');
+  await expect(row.locator('.task-status')).toHaveAttribute('title',/Cleanup interrupted/);
+  await expect(page).toHaveTitle('(1·0) Aide de camp');
+  unlinkSync(join(f.dir,'cleanup.fail'));
+  await row.getByRole('button',{name:/closing/}).click();
+  page.once('dialog',d=>d.accept());await row.getByRole('button',{name:'Close task'}).click();
+  await expect(row).toHaveCount(0);
+  await page.getByLabel('Show completed').check();
+  await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
+  await expect(row.locator('.task-status')).toHaveText('Completed');
+ }finally{if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
+});
+
 test('repository defaults and selection survive refreshes; the full task title toggles accessibly',async({page})=>{
  const f=fixture();
  f.run('git',['clone',join(f.dir,'source'),'second']);
@@ -249,6 +285,63 @@ function runtimeTools(f,id){
  return {tmux,session,pane,capture,send,backend};
 }
 
+test('terminal activity aggregates detached panes and ignores backend and Codex process trees',async({page})=>{
+ test.setTimeout(90000);
+ const f=fixture();f.env.AIDE_FIXTURE_UI_CHILD='1';
+ const server=await manager(f);
+ try{
+  f.run(binary,['task','start','activity','--workspace-only']);
+  await page.goto(server.url);
+  await expect(taskRow(page,'activity').locator('.terminal-activity')).toHaveText('—');
+  f.run(binary,['task','recover','activity']);
+  f.run(binary,['task','attach','activity','--new-window']);
+  const r=runtimeTools(f,'activity'),work=r.pane('work'),backend=r.pane('backend');
+  await expect.poll(()=>r.capture(work)).toContain('Fixture Codex conversation ready');
+  await page.goto(server.url);
+  const row=taskRow(page,'activity'),activity=row.locator('.terminal-activity');
+  await expect(row).toContainText('Fixture conversation');
+  await expect(activity).toHaveText('Idle');
+  const title=await page.title();
+  expect(r.tmux('list-clients','-t',r.session)).toBe('');
+  r.tmux('rename-window','-t',backend,'my renamed backend');
+  r.tmux('swap-window','-s',backend,'-t',work);
+  const tools=r.tmux('new-window','-d','-P','-F','#{pane_id}','-t',r.session,'-n','tools','fish');
+  // Only the managed pane is ignored, not every pane sharing its window.
+  const split=r.tmux('split-window','-d','-P','-F','#{pane_id}','-t',backend,'fish');
+  await expect(activity).toHaveText('Idle');
+  await r.send(tools,'sleep 90 &; set -g activity_job $last_pid');
+  await expect(activity).toHaveText('Working');
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+  await expect(page).toHaveTitle(title);
+  await r.send(split,'sleep 90');
+  await r.send(tools,'kill $activity_job');
+  await expect(activity).toHaveText('Working');
+  r.tmux('send-keys','-t',split,'C-c');
+  await expect(activity).toHaveText('Idle');
+  // Codex resumed in a user-added pane is also excluded, including its child.
+  await r.send(tools,`'${binary}' codex resume`);
+  await expect.poll(()=>r.capture(tools)).toContain('Fixture Codex conversation ready');
+  await expect(activity).toHaveText('Idle');
+  // Exiting the managed UI must not hide later work in that same pane.
+  r.tmux('send-keys','-t',work,'C-d');
+  await expect.poll(()=>r.tmux('display-message','-p','-t',work,'#{pane_current_command}')).toBe('fish');
+  await r.send(work,'sleep 90');
+  await expect(activity).toHaveText('Working');
+  await page.reload();await expect(activity).toHaveText('Working');
+  r.tmux('send-keys','-t',work,'C-c');
+  await expect(activity).toHaveText('Idle');
+  // Neither a retained dead pane nor a removed pane may keep work active.
+  r.tmux('set-option','-p','-t',split,'remain-on-exit','on');
+  await r.send(split,'exit');
+  r.tmux('kill-pane','-t',tools);
+  await expect(activity).toHaveText('Idle');
+  expect(f.run(binary,['task','list'])).toContain('terminal=Idle');
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  expect((await row.boundingBox()).height).toBeLessThanOrEqual(60);
+ }finally{await stop(server);cleanup(f);}
+});
+
 test('independent backend, shell environment repair, context checks and managed-window recovery',async({page})=>{
  test.setTimeout(90000);
  const f=fixture();f.env.AIDE_TEST_CHANGED='old';f.env.AIDE_TEST_REMOVED='stale';
@@ -306,7 +399,11 @@ test('independent backend, shell environment repair, context checks and managed-
   r.tmux('send-keys','-t',replacement,'C-c');
   await expect.poll(()=>r.tmux('display-message','-p','-t',replacement,'#{pane_dead}')).toBe('1');
   r.tmux('respawn-pane','-t',replacement,'sleep','120');
-  expect(()=>f.run(binary,['task','recover','runtime'])).toThrow(/unresponsive/);
+  // The newly restored UI can still briefly hold the task lock while resuming.
+  await expect.poll(()=>{
+   try{f.run(binary,['task','recover','runtime']);return 'unexpected recovery';}
+   catch(error){return error.message;}
+  }).toMatch(/unresponsive/);
   expect(r.tmux('display-message','-p','-t',replacement,'#{pane_current_command}')).toBe('sleep');
  }finally{await stop(server);cleanup(f);}
 });

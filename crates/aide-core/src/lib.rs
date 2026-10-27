@@ -14,10 +14,18 @@ pub enum Lifecycle {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
+    Closing,
     Working,
     Waiting,
     Attention,
     Completed,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalActivity {
+    Idle,
+    Working,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -57,6 +65,8 @@ pub struct TaskView {
     pub terminal_alive: bool,
     pub backend_alive: bool,
     pub summary: Option<String>,
+    #[serde(default)]
+    pub terminal_activity: Option<TerminalActivity>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

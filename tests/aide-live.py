@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Opt-in native Codex/tmux acceptance check using disposable repositories.
 Uses the configured Codex account for two small turns (one with --detached-status);
-never edits user repositories.
+--terminal-activity sends no model prompts. Never edits user repositories.
 """
 import json
 import os
@@ -18,6 +18,7 @@ import sys
 BINARY = Path(__file__).resolve().parents[1] / 'target/debug/aide'
 resume_only = '--resume-only' in sys.argv
 detached_status = '--detached-status' in sys.argv
+terminal_activity = '--terminal-activity' in sys.argv
 base = Path(sys.argv[sys.argv.index('--resume-only') + 1]) if resume_only else Path(tempfile.mkdtemp(prefix='aide-native-', dir='/tmp'))
 root = base / 'Project'
 root.mkdir(exist_ok=True)
@@ -144,6 +145,28 @@ try:
         run(BINARY, 'task', 'recover', 'native-check')
         session = 'aide-' + task()['key']
         wait(ready)
+        if terminal_activity:
+            wait(lambda: native_ui_processes())
+            wait(lambda: 'terminal=Idle' in run(BINARY, 'task', 'list'))
+            assert not tmux('list-clients', '-t', session)
+            extra = tmux('new-window', '-d', '-P', '-F', '#{pane_id}', '-t', session, 'fish')
+            tmux('send-keys', '-t', extra, '-l', 'sleep 90')
+            tmux('send-keys', '-t', extra, 'Enter')
+            wait(lambda: 'terminal=Working' in run(BINARY, 'task', 'list'))
+            tmux('send-keys', '-t', extra, 'C-c')
+            wait(lambda: 'terminal=Idle' in run(BINARY, 'task', 'list'))
+            keys('C-d')
+            wait(lambda: not native_ui_processes())
+            prompt('sleep 90')
+            wait(lambda: 'terminal=Working' in run(BINARY, 'task', 'list'))
+            keys('C-c')
+            wait(lambda: 'terminal=Idle' in run(BINARY, 'task', 'list'))
+            prompt(str(BINARY) + ' codex resume')
+            wait(lambda: native_ui_processes())
+            wait(ready)
+            wait(lambda: 'terminal=Idle' in run(BINARY, 'task', 'list'))
+            print('Native terminal activity passed: backend/UI excluded, extra pane and post-Codex shell detected, resume excluded. No model prompts. Artifacts:', base, flush=True)
+            sys.exit(0)
         if detached_status:
             # A real terminal client, but no GUI or changes to user sessions.
             client_log = open(base / 'attached-client.log', 'w')

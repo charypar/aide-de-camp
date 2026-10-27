@@ -264,7 +264,7 @@ pub fn remove(project: &Project, task: &mut Task) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     pub fn fixture() -> Result<(tempfile::TempDir, Home, Project)> {
         let temp = tempfile::tempdir()?;

@@ -149,12 +149,21 @@ impl Runtime {
             terminal_alive,
             backend_alive: false,
             summary: None,
+            terminal_activity: None,
             task,
         };
-        if view.task.lifecycle == Lifecycle::Completed {
-            view.status = Status::Completed;
-            view.reason = "Completed".into();
-            return view;
+        match view.task.lifecycle {
+            Lifecycle::Closing => {
+                view.status = Status::Closing;
+                view.reason = "Closing task".into();
+                return view;
+            }
+            Lifecycle::Completed => {
+                view.status = Status::Completed;
+                view.reason = "Completed".into();
+                return view;
+            }
+            _ => {}
         }
         if let Ok(mut rpc) = Rpc::connect(&self.socket(&view.task)).await {
             view.backend_alive = true;
@@ -193,19 +202,53 @@ impl Runtime {
             view.status = Status::Attention;
             view.reason = error.clone();
         }
-        if matches!(
-            view.task.lifecycle,
-            Lifecycle::Preparing | Lifecycle::Closing
-        ) {
+        if view.task.lifecycle == Lifecycle::Preparing {
             view.status = Status::Attention;
-            view.reason = match view.task.lifecycle {
-                Lifecycle::Preparing => "Preparing workspace",
-                Lifecycle::Closing => "Closing task",
-                _ => unreachable!(),
-            }
-            .into();
+            view.reason = "Preparing workspace".into();
         }
         view
+    }
+
+    pub fn refresh_lifecycle(project: &Project, view: &mut TaskView) {
+        // Cleanup may begin while thread/read is in flight. Durable lifecycle
+        // state takes precedence over a disappearing backend's observations.
+        if let Ok(current) = project.task(&view.task.id) {
+            view.task = current;
+        }
+        match view.task.lifecycle {
+            Lifecycle::Closing => {
+                view.summary = project.task_summary(&view.task.id).ok().flatten();
+                let busy = project.task_lock(&view.task.id).err().is_some_and(|error| {
+                    error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock)
+                });
+                if busy {
+                    view.status = Status::Closing;
+                    view.reason = "Closing task".into();
+                } else {
+                    // Cleanup can finish between reading the record and checking
+                    // its lock. Do not report that successful completion as failure.
+                    if let Ok(current) = project.task(&view.task.id)
+                        && current.lifecycle == Lifecycle::Completed
+                    {
+                        view.summary = project.task_summary(&current.id).ok().flatten();
+                        view.task = current;
+                        view.status = Status::Completed;
+                        view.reason = "Completed".into();
+                        return;
+                    }
+                    view.status = Status::Attention;
+                    view.reason = "Cleanup interrupted; retry Close task".into();
+                }
+            }
+            Lifecycle::Completed => {
+                view.summary = project.task_summary(&view.task.id).ok().flatten();
+                view.status = Status::Completed;
+                view.reason = "Completed".into();
+            }
+            _ => {}
+        }
     }
     pub async fn recover(&self, project: &mut Project, task: &Task) -> Result<()> {
         self.repair(project, task, true, None).await
@@ -215,6 +258,12 @@ impl Runtime {
             bail!("Explicit confirmation required to close a task");
         }
         let _transition = project.task_lock(id)?;
+        let current = project.task(id)?;
+        if current.lifecycle == Lifecycle::Open
+            && let Some(summary) = self.view(current).await.summary
+        {
+            project.remember_summary(id, &summary)?;
+        }
         let task = project.update(id, |t| {
             if t.lifecycle != Lifecycle::Completed {
                 t.lifecycle = Lifecycle::Closing;
@@ -304,6 +353,36 @@ fn native_status(value: &serde_json::Value) -> (Status, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cleanup_overrides_stale_observation_and_preserves_title_after_reopen() -> Result<()> {
+        let (_temp, home, project) = workspace::tests::fixture()?;
+        let task = workspace::start(&project, "closing", None)?;
+        let runtime = Runtime::new(&home);
+        let mut stale = runtime.view(task.clone()).await;
+        let lock = project.task_lock(&task.id)?;
+        project.update(&task.id, |t| {
+            t.lifecycle = Lifecycle::Closing;
+        })?;
+        project.remember_summary(&task.id, "Retained title")?;
+        // An older surviving worker can still rewrite the task JSON on shutdown.
+        // It must not erase the independently retained title.
+        let current = project.task(&task.id)?;
+        project.save(&current)?;
+        Runtime::refresh_lifecycle(&project, &mut stale);
+        assert_eq!(stale.status, Status::Closing);
+        assert_eq!(stale.summary.as_deref(), Some("Retained title"));
+        drop(lock);
+        let reopened = Project::open(&project.root)?;
+        Runtime::refresh_lifecycle(&reopened, &mut stale);
+        assert_eq!(stale.status, Status::Attention);
+        assert!(stale.reason.contains("retry Close task"));
+        reopened.update(&task.id, |t| t.lifecycle = Lifecycle::Completed)?;
+        Runtime::refresh_lifecycle(&reopened, &mut stale);
+        assert_eq!(stale.status, Status::Completed);
+        assert_eq!(stale.summary.as_deref(), Some("Retained title"));
+        Ok(())
+    }
+
     #[test]
     fn native_status_does_not_confuse_approval_or_unknown_states_with_completion() {
         assert_eq!(

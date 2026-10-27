@@ -87,6 +87,10 @@ aide-dev-server: build-aide-ui
 test-aide-protocol:
     cargo test --locked -p aide-server live_codex_observer -- --ignored --nocapture
 
+# Check terminal activity with native Codex and detached tmux panes (no model prompts).
+test-aide-terminal-activity: build
+    python3 tests/aide-live.py --terminal-activity
+
 # Exercise native terminal conversation, fish environment, and restart recovery (two model turns).
 test-aide-live: build
     python3 tests/aide-live.py

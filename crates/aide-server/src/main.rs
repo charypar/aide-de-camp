@@ -1,3 +1,4 @@
+mod activity;
 mod cli;
 mod database;
 mod http;

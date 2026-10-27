@@ -175,14 +175,25 @@ pub async fn run() -> Result<()> {
                     }
                 }
                 TaskAction::List { completed } => {
+                    let activity = crate::activity::ActivitySnapshot::capture().await;
                     for task in project.tasks()? {
                         if !completed && task.lifecycle == Lifecycle::Completed {
                             continue;
                         }
-                        let view = runtime.view(task).await;
+                        let terminal = activity.for_task(&task);
+                        let mut view = runtime.view(task).await;
+                        Runtime::refresh_lifecycle(&project, &mut view);
                         println!(
-                            "{}\t{:?}\t{}\t{}",
-                            view.task.id, view.status, view.reason, view.task.workspace
+                            "{}\t{:?}\t{}\t{}\tterminal={}",
+                            view.task.id,
+                            view.status,
+                            view.reason,
+                            view.task.workspace,
+                            match terminal {
+                                Some(aide_core::TerminalActivity::Idle) => "Idle",
+                                Some(aide_core::TerminalActivity::Working) => "Working",
+                                None => "Unavailable",
+                            }
                         );
                     }
                 }
@@ -213,7 +224,8 @@ pub async fn run() -> Result<()> {
                     .await?
                 }
                 TaskAction::Cleanup { id } => {
-                    let view = runtime.view(project.task(&id)?).await;
+                    let mut view = runtime.view(project.task(&id)?).await;
+                    Runtime::refresh_lifecycle(&project, &mut view);
                     println!(
                         "Close {id} and remove {}? History and recordings will be retained.",
                         view.task.workspace

@@ -1,6 +1,8 @@
 use aide_core::{Repository, Task};
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
@@ -125,6 +127,11 @@ impl Project {
         if app != APPLICATION || version != 1 {
             bail!("Unrecognised Aide database or schema version");
         }
+        // Additive metadata remains compatible with task workers from an older
+        // installation, which may still rewrite the original task JSON.
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS task_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL)",
+        )?;
         Ok(Self { root, db })
     }
     pub fn discover(from: &Path) -> Result<Self> {
@@ -157,6 +164,23 @@ impl Project {
     }
     pub fn tasks(&self) -> Result<Vec<Task>> {
         self.read_all("tasks")
+    }
+    pub fn remember_summary(&self, id: &str, summary: &str) -> Result<()> {
+        self.db.execute(
+            "INSERT INTO task_summaries VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET summary=excluded.summary",
+            params![id, summary],
+        )?;
+        Ok(())
+    }
+    pub fn task_summary(&self, id: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT summary FROM task_summaries WHERE id=?",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
     fn read_all<T: serde::de::DeserializeOwned>(&self, table: &str) -> Result<Vec<T>> {
         let values = self

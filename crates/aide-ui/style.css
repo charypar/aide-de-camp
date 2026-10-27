@@ -100,6 +100,8 @@ h3 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.8px; color: v
 .task-status[data-status=working] { color: var(--muted); background: transparent; }
 .task-status[data-status=completed] { color: var(--muted); background: var(--base); }
 .terminal-icon { display: none; }
+.terminal-activity { font-weight: 600; }
+.terminal-note { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .task-heading > button:not(.task-title) { flex-shrink: 0; }
 .task-context { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 16px; line-height: 1.6; }
 .task-context .repo { font-weight: 600; }

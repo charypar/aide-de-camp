@@ -1,5 +1,5 @@
 use crate::transport::Context;
-use aide_core::{Command, Lifecycle, ProjectView, Status};
+use aide_core::{Command, Lifecycle, ProjectView, Status, TerminalActivity};
 use leptos::prelude::*;
 
 #[component]
@@ -100,7 +100,7 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
                 <button class="primary" type="submit" disabled=move || !cx.connected.get() || selected_repository.get().is_empty()>"Start and open Codex"</button>
             </form></Show>
             <p class="error">{move || project.get().and_then(|p| p.error)}</p>
-            { [Status::Attention, Status::Waiting, Status::Working, Status::Completed].into_iter().map(move |status| {
+            { [Status::Attention, Status::Waiting, Status::Working, Status::Closing, Status::Completed].into_iter().map(move |status| {
                 let group = status.clone();
                 let list = Memo::new(move |_| project.get().map(|p| p.tasks.into_iter().filter(|t| t.status == group && (completed.get() || t.task.lifecycle != Lifecycle::Completed)).map(|t| t.task.id).collect::<Vec<_>>()).unwrap_or_default());
                 view! { <Show when=move || !list.get().is_empty()><h3>{label(&status)}</h3><For each=move || list.get() key=|id| id.clone() children={move |id| view!{<Task root=root.get_value() id=id/>}}/></Show> }
@@ -194,8 +194,17 @@ fn Task(root: String, id: String) -> impl IntoView {
         }
     };
     let is_open = move || {
-        task.get()
-            .is_some_and(|t| t.task.lifecycle != Lifecycle::Completed)
+        task.get().is_some_and(|t| {
+            t.task.lifecycle != Lifecycle::Completed && t.status != Status::Closing
+        })
+    };
+    let terminal_activity = move || terminal_label(task.get().and_then(|t| t.terminal_activity));
+    let terminal_description = move || {
+        if task.get().and_then(|t| t.terminal_activity).is_some() {
+            format!("Terminal activity: {}. Open terminal", terminal_activity())
+        } else {
+            "Terminal activity unavailable. Open terminal".into()
+        }
     };
     view! {
         <article class="task">
@@ -207,8 +216,8 @@ fn Task(root: String, id: String) -> impl IntoView {
                     {move || task.get().map(|t| label(&t.status))}
                 </span>
             </button>
-                <Show when=is_open><button class="terminal-action" aria-label="Open terminal" title="Open terminal" on:click=attach disabled=move || !cx.connected.get()>
-                    <span class="terminal-label">"Open terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span>
+                <Show when=is_open><button class="terminal-action" aria-label="Open terminal" aria-description=terminal_description title=terminal_description on:click=attach disabled=move || !cx.connected.get()>
+                    <span class="terminal-label">"Terminal "</span><span class="terminal-icon" aria-hidden="true">">_ "</span><span class="terminal-activity">{terminal_activity}</span>
                 </button></Show>
             </div>
             <Show when=move || expanded.get()>
@@ -217,6 +226,11 @@ fn Task(root: String, id: String) -> impl IntoView {
                     <p class="task-context"><span class="repo">{move || task.get().map(|t| t.task.repository)}</span><span class="reason">{move || task.get().map(|t| t.reason)}</span></p>
                     <code>{move || task.get().map(|t| t.task.workspace)}</code><button on:click=copy_path>"Copy path"</button>
                     <dl><dt>"Conversation"</dt><dd>{move || task.get().and_then(|t| t.task.thread_id).unwrap_or_else(|| "Not started".into())}</dd><dt>"Recording"</dt><dd>{move || task.get().and_then(|t| t.task.recording).unwrap_or_else(|| "Not recorded yet".into())}</dd></dl>
+                    <Show when=is_open><p class="terminal-note">{move || match task.get().and_then(|t| t.terminal_activity) {
+                        Some(TerminalActivity::Idle) => "Terminal idle — no commands detected outside Codex.",
+                        Some(TerminalActivity::Working) => "Terminal working — commands are running in one or more panes outside Codex.",
+                        None => "Terminal activity unavailable — the session is absent or process inspection did not succeed.",
+                    }}</p></Show>
                     <Show when=is_open><div class="actions"><button on:click=editor>"Open Zed"</button><button on:click=review>"Review"</button><button on:click=recover>"Recover session"</button><button class="danger" on:click=cleanup>"Close task"</button></div></Show>
                 </div>
             </Show>
@@ -224,8 +238,17 @@ fn Task(root: String, id: String) -> impl IntoView {
     }
 }
 
+fn terminal_label(activity: Option<TerminalActivity>) -> &'static str {
+    match activity {
+        Some(TerminalActivity::Idle) => "Idle",
+        Some(TerminalActivity::Working) => "Working",
+        None => "—",
+    }
+}
+
 fn status_name(status: &Status) -> &'static str {
     match status {
+        Status::Closing => "closing",
         Status::Attention => "attention",
         Status::Working => "working",
         Status::Waiting => "waiting",
@@ -235,6 +258,7 @@ fn status_name(status: &Status) -> &'static str {
 
 fn label(status: &Status) -> &'static str {
     match status {
+        Status::Closing => "Closing",
         Status::Attention => "Requires attention",
         Status::Working => "Working",
         Status::Waiting => "Ready",
