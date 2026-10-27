@@ -32,16 +32,21 @@ test('task creation, native status, focus, confirmation and retained history',as
   await page.getByRole('button',{name:'New task'}).click();await expect(page.getByRole('combobox',{name:'Repository'})).toHaveValue('repo');await page.getByLabel('Task ID').fill('bad task');expect(await page.getByLabel('Task ID').evaluate(el=>el.checkValidity())).toBe(false);await page.getByLabel('Task ID').fill('task-1234');await page.getByRole('button',{name:'Start and open Codex'}).click();
   const row=taskRow(page,'task-1234');await expect(row).toBeVisible();await row.getByRole('button',{name:/task-1234/}).click();
   await expect(row).toContainText('Fixture conversation',{timeout:25000});await expect(row.locator('.task-status')).toHaveAttribute('title','Conversation idle');
+  await expect(page).toHaveTitle('(0·1) Aide de camp');
   const workspace=join(f.root,'repo-tasks','task-1234');expect(readFileSync(join(workspace,'hello.txt'),'utf8')).toBe('trunk\n');
   writeFileSync(join(workspace,'.fixture-status'),JSON.stringify({type:'active',activeFlags:['waitingOnApproval']}));
   await expect(page.getByRole('heading',{name:'Requires attention'})).toBeVisible();await expect(row.locator('.task-status')).toHaveAttribute('title',/Codex needs your input/);
+  await expect(page).toHaveTitle('(1·0) Aide de camp');
   await page.getByRole('button',{name:'Cat Herder',exact:true}).click();await expect(row).toBeVisible();
+  await expect(page).toHaveTitle('(1·0) Aide de camp');
   // A status transition may remount the row in another group.
   if(!await row.getByRole('button',{name:'Close task'}).isVisible())await row.getByRole('button',{name:/task-1234/}).click();
   page.once('dialog',async d=>{expect(d.message()).toContain('session');await d.dismiss();});await row.getByRole('button',{name:'Close task'}).click();expect(existsSync(workspace)).toBe(true);
   page.once('dialog',d=>d.accept());await row.getByRole('button',{name:'Close task'}).click();await expect(row).toHaveCount(0,{timeout:20000});expect(existsSync(workspace)).toBe(false);
+  await expect(page).toHaveTitle('Aide de camp');
   await page.getByLabel('Show completed').check();await expect(row).toBeVisible();await row.getByRole('button',{name:/task-1234/}).click();await expect(row).toContainText('recordings');
   expect(f.run(binary,['task','list','--completed'])).toContain('Completed');
+  await expect(page).toHaveTitle('Aide de camp');
  }finally{await stop(server);cleanup(f);}
 });
 

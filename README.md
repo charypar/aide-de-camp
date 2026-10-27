@@ -1,7 +1,7 @@
 # Aide de camp
 
 > **Big honking warning**: This is entirely vibe coded, I haven't even read the code, and might not until I feel like it.
-> It's very much build for my preferred tools and workflow – codex, tmux, Alacritty, Zed – therefore unlikely to work
+> It's very much built for my preferred tools and workflow – codex, tmux, Alacritty, Zed – therefore unlikely to work
 > for yours.
 >
 > It's likely that the whole thing is quite rough, and will change a lot. Try at your own risk. You've been warned.

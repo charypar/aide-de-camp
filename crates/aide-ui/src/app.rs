@@ -9,6 +9,29 @@ pub fn App() -> impl IntoView {
     cx.connect();
     let focus = RwSignal::new(String::new());
     let completed = RwSignal::new(false);
+    Effect::new(move |_| {
+        let projects = cx.projects.get();
+        let mut attention = 0;
+        let mut ready = 0;
+        for task in projects.iter().flat_map(|project| &project.tasks) {
+            if task.task.lifecycle == Lifecycle::Completed {
+                continue;
+            }
+            match task.status {
+                Status::Attention => attention += 1,
+                Status::Waiting => ready += 1,
+                _ => {}
+            }
+        }
+        let title = if attention == 0 && ready == 0 {
+            "Aide de camp".to_owned()
+        } else {
+            format!("({attention}·{ready}) Aide de camp")
+        };
+        if let Some(document) = web_sys::window().and_then(|window| window.document()) {
+            document.set_title(&title);
+        }
+    });
     let show_all = move |_| focus.set(String::new());
     let toggle_history = move |_| completed.update(|v| *v = !*v);
     view! {
