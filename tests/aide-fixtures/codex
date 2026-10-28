@@ -48,6 +48,8 @@ if args and args[0]=='app-server':
     root=Path(os.environ['AIDE_FIXTURE_RECORDINGS']); root.mkdir(exist_ok=True)
     def other_thread():
         if not state['thread'] or not Path('.fixture-other-thread').exists(): return None
+        if Path('.fixture-other-thread').read_text().strip()=='thread_title':
+            return {'id':'other-fixture','path':None,'cwd':os.getcwd(),'status':{'type':'idle'},'name':None,'source':'vscode','threadSource':'thread_title'}
         path=root/'other-fixture.jsonl'
         if not path.exists():path.write_text('unrelated conversation\n')
         return {'id':'other-fixture','path':str(path),'cwd':os.getcwd(),'status':{'type':'idle'},'name':'Unrelated conversation'}

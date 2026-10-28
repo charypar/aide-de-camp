@@ -445,6 +445,30 @@ test('ambiguous initial conversations require attention instead of choosing one'
  }finally{await stop(server);cleanup(f);}
 });
 
+test('title helper threads do not block binding and resolved monitoring errors clear',async({page})=>{
+ const f=fixture();const server=await manager(f);
+ try{
+  f.run(binary,['task','start','helper','--workspace-only']);
+  const workspace=join(f.root,'repo-tasks','helper');
+  // Begin genuinely ambiguous, then classify the extra thread as the native
+  // title helper. This also exercises recovery from an existing monitor error.
+  writeFileSync(join(workspace,'.fixture-other-thread'),'yes');
+  f.run(binary,['task','recover','helper']);
+  f.run(binary,['task','attach','helper','--new-window']);
+  await page.goto(server.url);const row=taskRow(page,'helper');
+  await expect(row.locator('.task-status')).toHaveAttribute('title',/Multiple conversations found/);
+  writeFileSync(join(workspace,'.fixture-other-thread'),'thread_title');
+  await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+  await row.getByRole('button',{name:/helper/}).click();
+  await expect(row.locator('dd').first()).toHaveText(/^fixture-/);
+  writeFileSync(join(workspace,'.fixture-status'),JSON.stringify({type:'active',activeFlags:[]}));
+  await expect(row.locator('.task-status')).toHaveText('Working');
+  await page.reload();await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
+  await expect(row.locator('.task-status')).toHaveText('Working');
+ }finally{await stop(server);cleanup(f);}
+});
+
 test('slow repository work leaves one dashboard responsive; shared repo and task transitions stay locked',async({page})=>{
  test.setTimeout(90000);
  const f=fixture(),gates=join(f.dir,'gates');mkdirSync(gates);f.env.AIDE_FIXTURE_FETCH_GATES=gates;

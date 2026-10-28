@@ -121,6 +121,12 @@ impl Runtime {
                     if let Err(error) = observed {
                         let _ = project.update(&task.id, |t| t.error = Some(format!("Recording/monitor: {error}")));
                         rpc = Rpc::connect(&self.socket(task)).await?;
+                    } else if project.task(&task.id)?.error.as_deref().is_some_and(|e| e.starts_with("Recording/monitor:")) {
+                        project.update(&task.id, |t| {
+                            if t.error.as_deref().is_some_and(|e| e.starts_with("Recording/monitor:")) {
+                                t.error = None;
+                            }
+                        })?;
                     }
                 }
             }
@@ -143,7 +149,9 @@ impl Runtime {
                 for id in ids {
                     let value = rpc.call("thread/read", json!({"threadId": id})).await?;
                     let thread = &value["thread"];
-                    if thread["cwd"].as_str() == Some(task.workspace.as_str()) {
+                    if thread["cwd"].as_str() == Some(task.workspace.as_str())
+                        && is_user_conversation(thread)
+                    {
                         candidates.push(thread.clone());
                     }
                 }
@@ -255,6 +263,48 @@ impl Runtime {
             }
         }
         Ok((project, task))
+    }
+}
+
+fn is_user_conversation(thread: &serde_json::Value) -> bool {
+    // Modern servers also load internal threads (e.g. `thread_title`) with
+    // the user's cwd and source. They must never participate in task binding.
+    if !thread["threadSource"].is_null() {
+        return thread["threadSource"].as_str() == Some("user");
+    }
+    // Older servers lack threadSource; exclude their explicit subagent sources
+    // while preserving discovery for ordinary legacy conversations.
+    let source = &thread["source"];
+    source.get("subAgent").is_none() && !source.as_str().is_some_and(|s| s.starts_with("subAgent"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_excludes_internal_threads_and_supports_legacy_user_threads() {
+        for source in [
+            "thread_title",
+            "subagent",
+            "guardian_review",
+            "future_helper",
+        ] {
+            assert!(!is_user_conversation(
+                &json!({"source":"vscode", "threadSource":source})
+            ));
+        }
+        assert!(is_user_conversation(
+            &json!({"source":"vscode", "threadSource":"user"})
+        ));
+        assert!(is_user_conversation(
+            &json!({"source":"cli", "threadSource":null})
+        ));
+        assert!(is_user_conversation(&json!({})));
+        assert!(!is_user_conversation(
+            &json!({"source":{"subAgent":{"thread_spawn":{}}}})
+        ));
+        assert!(!is_user_conversation(&json!({"source":"subAgentReview"})));
     }
 }
 
