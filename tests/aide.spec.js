@@ -106,6 +106,12 @@ test('repository defaults and selection survive refreshes; the full task title t
   const id='a-task-with-a-long-title-to-check-narrow-screen-layout';
   await page.getByLabel('Task ID').fill(id);
   await page.getByRole('button',{name:'Start and open Codex'}).click();
+  await expect(page.getByLabel('Task ID')).toHaveCount(0);
+  await expect(newTask).toHaveAttribute('aria-expanded','false');
+  await newTask.click();
+  await expect(page.getByLabel('Task ID')).toHaveValue(id);
+  await expect(repository).toHaveValue('second');
+  await newTask.click();
   const row=taskRow(page,id),title=row.getByRole('button',{name:new RegExp(id)});
   await expect(row).toContainText('Fixture conversation',{timeout:25000});
   expect(existsSync(join(f.root,'second-tasks',id,'hello.txt'))).toBe(true);
@@ -127,6 +133,83 @@ test('repository defaults and selection survive refreshes; the full task title t
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await title.click();await expect(title).toHaveAttribute('aria-expanded','false');
   await title.click();await expect(title).toHaveAttribute('aria-expanded','true');
+ }finally{await stop(server);cleanup(f);}
+});
+
+test('start submission closes the form; toasts expire, replace timers and distinguish outcomes',async({page})=>{
+ const f=fixture(),server=await manager(f);
+ let socket;
+ const commands=[];
+ try{
+  // Keep real project snapshots but control command outcomes and timing.
+  await page.routeWebSocket('**/ws',ws=>{
+   socket=ws;
+   const backend=ws.connectToServer();
+   backend.onMessage(message=>ws.send(message));
+   ws.onMessage(message=>commands.push(JSON.parse(message)));
+  });
+  await page.addInitScript(()=>{
+   const send=WebSocket.prototype.send;
+   WebSocket.prototype.send=function(data){
+    if(window.failSend)throw new DOMException('Connection lost','InvalidStateError');
+    return send.call(this,data);
+   };
+  });
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  await page.goto(server.url);
+  const newTask=page.getByRole('button',{name:'New task'});
+  const toast=page.getByRole('status');
+  await expect(toast).toBeHidden();
+  await newTask.click();
+  await page.getByLabel('Task ID').fill('toast-task');
+  await page.evaluate(()=>window.failSend=true);
+  await page.getByRole('button',{name:'Start and open Codex'}).click();
+  await expect(page.getByLabel('Task ID')).toHaveValue('toast-task');
+  await expect(toast).toHaveText('Dashboard disconnected. Reconnect before trying again.');
+  await expect(toast).toHaveAttribute('data-kind','error');
+  expect(commands).toHaveLength(0);
+  await page.evaluate(()=>window.failSend=false);
+  await page.getByRole('button',{name:'Start and open Codex'}).click();
+  await expect(page.getByLabel('Task ID')).toHaveCount(0);
+  await expect(newTask).toHaveAttribute('aria-expanded','false');
+  await expect.poll(()=>commands.length).toBe(1);
+  expect(commands[0]).toMatchObject({action:'start',id:'toast-task',repository:'repo',open_terminal:true});
+  await expect(toast).toHaveText('Working…');
+  await expect(toast).toHaveAttribute('data-kind','progress');
+  const progressColour=await toast.evaluate(el=>getComputedStyle(el).borderLeftColor);
+  await page.clock.fastForward(4000);
+  socket.send(JSON.stringify({type:'result',message:'Started toast-task',error:false}));
+  await expect(toast).toHaveText('Started toast-task');
+  await expect(toast).toHaveAttribute('data-kind','success');
+  const successColour=await toast.evaluate(el=>getComputedStyle(el).borderLeftColor);
+  // The old progress timeout must not dismiss the success message.
+  await page.clock.fastForward(4000);
+  await expect(toast).toBeVisible();
+  // Repeated identical results also get a fresh five seconds.
+  socket.send(JSON.stringify({type:'result',message:'Started toast-task',error:false}));
+  await page.waitForTimeout(100);
+  await page.clock.fastForward(4000);
+  await expect(toast).toBeVisible();
+  await page.clock.fastForward(1000);
+  await expect(toast).toBeHidden();
+  await page.setViewportSize({width:390,height:844});
+  socket.send(JSON.stringify({type:'result',message:'Unable to start task: repository is unavailable. Reopen the form to retry.',error:true}));
+  await expect(toast).toHaveAttribute('data-kind','error');
+  await expect(toast).toBeVisible();
+  const style=await toast.evaluate(el=>{
+   const css=getComputedStyle(el);
+   return {border:css.borderTopWidth,bar:css.borderLeftWidth,colour:css.borderLeftColor};
+  });
+  expect(style.border).toBe('1px');expect(style.bar).toBe('5px');
+  expect(new Set([progressColour,successColour,style.colour]).size).toBe(3);
+  const box=await toast.boundingBox();
+  expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(390);
+  await page.clock.fastForward(5000);
+  await expect(toast).toBeHidden();
+  await newTask.click();
+  await expect(page.getByLabel('Task ID')).toHaveValue('toast-task');
+  await expect(page.getByRole('combobox',{name:'Repository'})).toHaveValue('repo');
  }finally{await stop(server);cleanup(f);}
 });
 
@@ -483,7 +566,10 @@ test('slow repository work leaves one dashboard responsive; shared repo and task
   f.run(binary,['task','recover','healthy']);
   await page.goto(server.url);const healthy=taskRow(page,'healthy');await expect(healthy).toContainText('Fixture conversation');
   await page.getByRole('button',{name:'New task'}).click();
-  const start=async(id,repo)=>{await page.getByLabel('Task ID').fill(id);await page.getByRole('combobox').selectOption(repo);await page.getByRole('button',{name:'Start and open Codex'}).click();};
+  const start=async(id,repo)=>{
+   if(!await page.getByLabel('Task ID').isVisible())await page.getByRole('button',{name:'New task'}).click();
+   await page.getByLabel('Task ID').fill(id);await page.getByRole('combobox').selectOption(repo);await page.getByRole('button',{name:'Start and open Codex'}).click();
+  };
   writeFileSync(join(gates,'repo.hold'),'hold');
   await start('slow-first','repo');await expect.poll(()=>existsSync(join(gates,'repo.entered'))).toBe(true);
   // The CLI shares the same task lock, even before task creation reaches SQLite.

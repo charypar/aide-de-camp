@@ -5,11 +5,29 @@ use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::WebSocket;
 
 #[derive(Clone, Copy)]
+pub enum NoticeKind {
+    Progress,
+    Success,
+    Error,
+}
+
+impl NoticeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Progress => "progress",
+            Self::Success => "success",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct Context {
     pub projects: RwSignal<Vec<ProjectView>>,
     pub connected: RwSignal<bool>,
     pub message: RwSignal<String>,
-    pub error: RwSignal<bool>,
+    pub notice_kind: RwSignal<NoticeKind>,
+    notice_timeout: StoredValue<Option<gloo_timers::callback::Timeout>, LocalStorage>,
     socket: StoredValue<Rc<RefCell<Option<WebSocket>>>, LocalStorage>,
 }
 impl Context {
@@ -18,11 +36,23 @@ impl Context {
             projects: RwSignal::new(vec![]),
             connected: RwSignal::new(false),
             message: RwSignal::new(String::new()),
-            error: RwSignal::new(false),
+            notice_kind: RwSignal::new(NoticeKind::Progress),
+            notice_timeout: StoredValue::new_local(None),
             socket: StoredValue::new_local(Rc::new(RefCell::new(None))),
         }
     }
-    pub fn send(self, command: Command) {
+    fn notify(self, message: String, kind: NoticeKind) {
+        self.notice_kind.set(kind);
+        self.message.set(message);
+        self.notice_timeout.update_value(|timer| {
+            // Dropping the previous timeout gives even identical messages a full lifetime.
+            *timer = Some(gloo_timers::callback::Timeout::new(5000, move || {
+                self.message.set(String::new());
+            }));
+        });
+    }
+
+    pub fn send(self, command: Command) -> bool {
         self.socket.with_value(|socket| {
             let result = socket
                 .borrow()
@@ -30,14 +60,16 @@ impl Context {
                 .filter(|s| s.ready_state() == WebSocket::OPEN)
                 .map(|s| s.send_with_str(&serde_json::to_string(&command).unwrap()));
             if !matches!(result, Some(Ok(()))) {
-                self.error.set(true);
-                self.message
-                    .set("Dashboard disconnected. Reconnect before trying again.".into());
+                self.notify(
+                    "Dashboard disconnected. Reconnect before trying again.".into(),
+                    NoticeKind::Error,
+                );
+                false
             } else {
-                self.error.set(false);
-                self.message.set("Working…".into());
+                self.notify("Working…".into(), NoticeKind::Progress);
+                true
             }
-        });
+        })
     }
     pub fn connect(self) {
         let host = web_sys::window().unwrap().location().host().unwrap();
@@ -55,8 +87,12 @@ impl Context {
                     match event {
                         Event::Snapshot { projects } => self.projects.set(projects),
                         Event::Result { message, error } => {
-                            self.error.set(error);
-                            self.message.set(message);
+                            let kind = if error {
+                                NoticeKind::Error
+                            } else {
+                                NoticeKind::Success
+                            };
+                            self.notify(message, kind);
                         }
                     }
                 }

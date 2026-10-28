@@ -126,9 +126,28 @@ input, select { padding: 10px; border: 1px solid var(--border); border-radius: 7
 .empty h1 { font-size: 28px; font-weight: 650; letter-spacing: -.8px; }
 .empty p, .empty-line { color: var(--muted); line-height: 1.7; }
 .empty code { overflow-wrap: anywhere; }
-.notice { padding: 14px 18px; background: var(--hover); border-radius: 7px; line-height: 1.6; overflow-wrap: anywhere; }
+.notice {
+  position: fixed;
+  top: 72px;
+  right: 24px;
+  z-index: 10;
+  width: max-content;
+  max-width: min(480px, calc(100vw - 32px));
+  margin: 0;
+  padding: 14px 18px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--notice-colour);
+  border-left-width: 5px;
+  border-radius: 7px;
+  box-shadow: 0 4px 18px #4c4f6926;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.notice[data-kind=progress] { --notice-colour: var(--accent); }
+.notice[data-kind=success] { --notice-colour: #26804a; }
+.notice[data-kind=error] { --notice-colour: #d20f39; }
 .error { color: #d20f39; overflow-wrap: anywhere; }
-.notice.error { background: #f9e0e7; }
 ::selection { background: #cbd8fc; }
 
 @media (max-width: 650px) {

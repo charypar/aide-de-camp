@@ -40,7 +40,7 @@ pub fn App() -> impl IntoView {
         </header>
         <main>
             <nav aria-label="Project navigation"><button class="project-filter" aria-pressed=move || focus.get().is_empty().to_string() on:click=show_all>"All projects"</button><label class="history"><input type="checkbox" on:change=toggle_history prop:checked=move || completed.get()/>"Show completed"</label></nav>
-            <p class="notice" class:error=move || cx.error.get() role="status">{move || cx.message.get()}</p>
+            <p class="notice" data-kind=move || cx.notice_kind.get().as_str() role="status" aria-atomic="true">{move || cx.message.get()}</p>
             <Show when=move || cx.projects.get().is_empty()><section class="empty"><h1>"Make room for your next task"</h1><p>"Register a project from your terminal:"</p><code>"aide init . --repo ./repository"</code></section></Show>
             <For each={move || cx.projects.get().into_iter().filter(|p| focus.get().is_empty() || focus.get() == p.root).map(|p| p.root).collect::<Vec<_>>()} key=|root| root.clone() children={move |root| view! { <Project root=root focus=focus completed=completed/> }}/>
         </main>
@@ -77,12 +77,14 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
     let start_task = move |event: web_sys::SubmitEvent| {
         event.prevent_default();
         let repo = selected_repository.get();
-        cx.send(Command::Start {
+        if cx.send(Command::Start {
             project: root.get_value(),
             id: id.get().trim().into(),
             repository: if repo.is_empty() { None } else { Some(repo) },
             open_terminal: true,
-        });
+        }) {
+            creating.set(false);
+        }
     };
     view! {
         <section class="project">
@@ -134,26 +136,26 @@ fn Task(root: String, id: String) -> impl IntoView {
         cx.send(Command::Attach {
             project: root.get_value(),
             id: id.get_value(),
-        })
+        });
     };
     let recover = move |_| {
         cx.send(Command::Recover {
             environment: None,
             project: root.get_value(),
             id: id.get_value(),
-        })
+        });
     };
     let editor = move |_| {
         cx.send(Command::Editor {
             project: root.get_value(),
             id: id.get_value(),
-        })
+        });
     };
     let review = move |_| {
         cx.send(Command::Review {
             project: root.get_value(),
             id: id.get_value(),
-        })
+        });
     };
     let cleanup = move |_| {
         if let Some(task) = task.get() {
