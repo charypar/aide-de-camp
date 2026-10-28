@@ -55,7 +55,7 @@ nav, .project-heading, .task-heading, .actions {
   align-items: center;
   gap: 12px;
 }
-nav { justify-content: space-between; margin-bottom: 32px; flex-wrap: wrap; }
+nav { justify-content: flex-start; margin-bottom: 32px; flex-wrap: wrap; }
 .project-filter[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
 .history { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
 .history input { accent-color: var(--accent); }
