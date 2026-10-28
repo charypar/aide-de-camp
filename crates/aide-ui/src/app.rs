@@ -201,9 +201,9 @@ fn Task(root: String, id: String) -> impl IntoView {
     let terminal_activity = move || terminal_label(task.get().and_then(|t| t.terminal_activity));
     let terminal_description = move || {
         if task.get().and_then(|t| t.terminal_activity).is_some() {
-            format!("Terminal activity: {}. Open terminal", terminal_activity())
+            format!("Terminal activity: {}", terminal_activity())
         } else {
-            "Terminal activity unavailable. Open terminal".into()
+            "Terminal activity unavailable".into()
         }
     };
     view! {
@@ -215,9 +215,12 @@ fn Task(root: String, id: String) -> impl IntoView {
                 <span class="task-status" data-status=move || task.get().map(|t| status_name(&t.status)) title=move || task.get().map(|t| t.reason)>
                     {move || task.get().map(|t| label(&t.status))}
                 </span>
+                <Show when=is_open><span class="terminal-status" aria-label=terminal_description title=terminal_description>
+                    <span class="terminal-label">"Terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span><span class="terminal-activity">{terminal_activity}</span>
+                </span></Show>
             </button>
-                <Show when=is_open><button class="terminal-action" aria-label="Open terminal" aria-description=terminal_description title=terminal_description on:click=attach disabled=move || !cx.connected.get()>
-                    <span class="terminal-label">"Terminal "</span><span class="terminal-icon" aria-hidden="true">">_ "</span><span class="terminal-activity">{terminal_activity}</span>
+                <Show when=is_open><button class="terminal-action" aria-label="Open terminal" title="Open terminal" on:click=attach disabled=move || !cx.connected.get()>
+                    <span class="terminal-label">"Open terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span>
                 </button></Show>
             </div>
             <Show when=move || expanded.get()>

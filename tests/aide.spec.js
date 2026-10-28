@@ -301,6 +301,9 @@ test('terminal activity aggregates detached panes and ignores backend and Codex 
   const row=taskRow(page,'activity'),activity=row.locator('.terminal-activity');
   await expect(row).toContainText('Fixture conversation');
   await expect(activity).toHaveText('Idle');
+  await expect(row.locator('.terminal-status')).toHaveAttribute('aria-label','Terminal activity: Idle');
+  await expect(row.locator('.terminal-action .terminal-activity')).toHaveCount(0);
+  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toHaveAttribute('title','Open terminal');
   const title=await page.title();
   expect(r.tmux('list-clients','-t',r.session)).toBe('');
   r.tmux('rename-window','-t',backend,'my renamed backend');
@@ -311,6 +314,7 @@ test('terminal activity aggregates detached panes and ignores backend and Codex 
   await expect(activity).toHaveText('Idle');
   await r.send(tools,'sleep 90 &; set -g activity_job $last_pid');
   await expect(activity).toHaveText('Working');
+  await expect(row.locator('.terminal-status')).toHaveAttribute('aria-label','Terminal activity: Working');
   await expect(row.locator('.task-status')).toHaveText('Ready');
   await expect(page).toHaveTitle(title);
   await r.send(split,'sleep 90');
