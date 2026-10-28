@@ -124,6 +124,8 @@ Codex reads the repository and prepares a walkthrough explaining the implementat
 
 Read the walkthrough alongside your editor's full diff. The guide helps explain the approach; Zed remains useful for browsing surrounding code and inspecting every change.
 
+Walkthrough code and diff excerpts include syntax highlighting for Rust, TypeScript/TSX, Markdown, TOML, YAML, Terraform/HCL, Swift, Kotlin, C#, and other common languages. Highlighting uses the captured full source on each side of a diff, preserving multiline context. It is prepared on the server with bundled grammars; opening the page needs no grammar downloads. Unsupported languages and large files remain readable as plain text with their source references intact.
+
 - Select guide text or code, then choose **Discuss with agent** to ask a question with that reference attached.
 - Choose **Add feedback** to record a comment at that location. Mark it as a **Change** or **Question**; discussion alone does not become feedback.
 - Use **Reference a file range** in chat for code outside the walkthrough, including lines found in your editor. References support both old and new sides of the diff.
@@ -174,6 +176,7 @@ just check                    # Formatting and Clippy checks
 just test                     # Rust tests
 just setup-browser            # Install optional browser-test dependencies
 just test-browser             # Headless browser tests for both tools
+just bench-review-render      # Measure cold/warm syntax-highlighted guide rendering
 just build                    # Build both tools with embedded browser assets
 ```
 

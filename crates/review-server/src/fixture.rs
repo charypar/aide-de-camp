@@ -1,4 +1,5 @@
 use crate::app::{Shared, publish};
+use crate::document;
 use anyhow::Result;
 use review_core::*;
 use uuid::Uuid;
@@ -95,7 +96,16 @@ pub(crate) async fn fixture_turn(app: &Shared, prompt: Option<String>) -> Result
         let mut guide="# Workspace walkthrough\n\nThis change updates the **workspace** implementation. Inspect the following changes and discuss the tradeoffs before recording feedback.\n\n".to_string();
         for file in &s.review.workspace.files {
             if let Some(source) = &file.new {
-                guide.push_str(&format!("## {}\n\nReview how this file contributes to the change.\n\n```text {{\"file\":{},\"start\":1}}\n{}```\n\n",file.path,serde_json::to_string(&file.path)?,if source.ends_with('\n'){source.clone()}else{format!("{source}\n")}));
+                let fence = "`".repeat(
+                    source
+                        .lines()
+                        .map(|line| line.bytes().take_while(|b| *b == b'`').count())
+                        .max()
+                        .unwrap_or(0)
+                        .max(2)
+                        + 1,
+                );
+                guide.push_str(&format!("## {}\n\nReview how this file contributes to the change.\n\n{fence}text {{\"file\":{},\"start\":1}}\n{}{fence}\n\n",file.path,serde_json::to_string(&file.path)?,if source.ends_with('\n'){source.clone()}else{format!("{source}\n")}));
             }
         }
         s.review.guide = guide;

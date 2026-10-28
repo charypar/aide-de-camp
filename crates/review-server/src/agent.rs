@@ -209,7 +209,7 @@ mod tests {
                 new: Some("pub fn add(a: i32, b: i32) -> i32 { a + b }\n".into()),
             }],
         };
-        let (_, warnings) = review_core::document::render(&guide, &workspace);
+        let (_, warnings) = crate::document::render(&guide, &workspace);
         assert!(warnings.is_empty(), "{warnings:?}\n{guide}");
         println!("Guide generated ({} characters)", guide.len());
         let (answer,mcp)=turn(&agent,&mut events,&thread,"Selected code: math.rs:1-1 (new). Does this add or subtract? Also call the configured Playwright browser_tabs tool with action list as a read-only MCP check; do not navigate or change tabs.").await?;

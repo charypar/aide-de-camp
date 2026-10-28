@@ -1,0 +1,72 @@
+[
+  {
+    "path": "sample.rs",
+    "language": "rust",
+    "source": "// Rust: types, calls, raw strings and Unicode\npub fn greet(name: &str) -> String {\n    let template = r#\"Hello <world> & café 🦀\"#;\n    format!(\"{template}, {name}\")\n}\n",
+    "category": "keyword",
+    "token": "pub"
+  },
+  {
+    "path": "sample.ts",
+    "language": "typescript",
+    "source": "// TypeScript: generics and template strings\nexport function greet<T extends string>(name: T): string {\n  return `Hello ${name.toUpperCase()}`;\n}\n",
+    "category": "keyword",
+    "token": "export"
+  },
+  {
+    "path": "sample.tsx",
+    "language": "tsx",
+    "source": "export const Greeting = ({ name }: { name: string }) => (\n  <div className=\"greeting\">Hello {name}</div>\n);\n",
+    "category": "keyword",
+    "token": "export"
+  },
+  {
+    "path": "sample.md",
+    "language": "markdown",
+    "source": "# Release notes\n\nA **bold** change with `inline code`.\n\n```rust\nfn main() {}\n```\n",
+    "category": "title",
+    "token": "Release notes"
+  },
+  {
+    "path": "sample.toml",
+    "language": "toml",
+    "source": "[package]\nname = \"review\"\nversion = \"0.1.0\"\n[features]\ndefault = [\"syntax\"]\n",
+    "category": "string",
+    "token": "review"
+  },
+  {
+    "path": "sample.yaml",
+    "language": "yaml",
+    "source": "name: review\nenabled: true\nsteps:\n  - run: |\n      echo \"hello\"\n      echo \"world\"\n",
+    "category": "property",
+    "token": "name"
+  },
+  {
+    "path": "sample.tf",
+    "language": "hcl",
+    "source": "resource \"aws_instance\" \"web\" {\n  count = 2\n  tags = { Name = \"web-${var.environment}\" }\n  user_data = <<-EOT\n    echo \"hello\"\n  EOT\n}\n",
+    "category": "string",
+    "token": "aws_instance"
+  },
+  {
+    "path": "sample.swift",
+    "language": "swift",
+    "source": "// Swift: generics and interpolation\nfunc greet<T>(_ name: T) -> String {\n    return \"Hello \\(name)\"\n}\n",
+    "category": "keyword",
+    "token": "func"
+  },
+  {
+    "path": "sample.kt",
+    "language": "kotlin",
+    "source": "// Kotlin: interpolation and nullable types\nfun greet(name: String?): String {\n    return \"Hello ${name ?: \"world\"}\"\n}\n",
+    "category": "keyword",
+    "token": "fun"
+  },
+  {
+    "path": "sample.cs",
+    "language": "c-sharp",
+    "source": "// C#: interpolated strings and methods\npublic class Greeting {\n    public string Hello(string name) => $\"Hello {name}\";\n}\n",
+    "category": "keyword",
+    "token": "public"
+  }
+]

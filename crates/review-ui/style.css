@@ -159,7 +159,8 @@ h3 {
   display:flex;
   min-width:max-content;
   font:12px/1.8 ui-monospace,SFMono-Regular,monospace;
-  padding-right:16px}
+  padding-right:16px;
+  border-left:3px solid transparent}
 .line-number {
   display:inline-block;
   width:38px;
@@ -170,12 +171,29 @@ h3 {
   user-select:none}
 .code-line code {
   padding-left:6px}
+#guide .code-line code, #guide .unmapped code { color:#343944 }
+/* Custom light palette: prioritise distinct, brighter hues on near-white rows.
+   Keep a 3.5:1 floor even under combined selection and feedback tint. */
+#guide .syntax-keyword, #guide .syntax-macro { color:#b51cbd }
+#guide .syntax-function, #guide .syntax-title { color:#006de0 }
+#guide .syntax-type, #guide .syntax-constructor, #guide .syntax-namespace { color:#996300 }
+#guide .syntax-string, #guide .syntax-literal { color:#16813e }
+#guide .syntax-comment { color:#68707c; font-style:italic }
+#guide .syntax-number, #guide .syntax-constant { color:#c34b00 }
+#guide .syntax-property, #guide .syntax-attribute, #guide .syntax-label { color:#00808d }
+#guide .syntax-tag { color:#d12b50 }
+#guide .syntax-link { color:#006de0; text-decoration:underline }
+#guide .syntax-strong { font-weight:600 }
+#guide .syntax-emphasis { font-style:italic }
+#guide .syntax-strikethrough { text-decoration:line-through }
 .added {
-  background:#e1f0df}
+  background:#f7fcf8;
+  border-left-color:#89c69b}
 .removed {
-  background:#f9e0e7}
+  background:#fff8f8;
+  border-left-color:#e9a0ad}
 .code-line[data-selected=true] {
-  background:#cbd8fc}
+  background:#e8f0ff}
 .hunk {
   font:11px/2 ui-monospace,monospace;
   background:#e6e9ef;
@@ -539,7 +557,7 @@ body { height:100dvh; display:flex; flex-direction:column; overflow:hidden; }
 .selection-actions { position:fixed; z-index:10; display:flex; padding:3px; background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:0 3px 16px #4c4f6925; }
 .selection-actions button { display:grid; place-items:center; padding:6px; border:0; }
 .selection-actions svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
-.code-line[data-feedback=true] { box-shadow:inset 3px 0 #df8e1d; background-image:linear-gradient(#df8e1d20,#df8e1d20); }
+.code-line[data-feedback=true] { box-shadow:inset 3px 0 #df8e1d; background-image:linear-gradient(#df8e1d12,#df8e1d12); }
 .code-line[data-selected=true] { box-shadow:inset 3px 0 var(--accent); }
 ::highlight(review-changes) { background:#f6e5bb; text-decoration:underline #df8e1d; }
 ::highlight(review-questions) { background:#e8dff7; text-decoration:underline #8839ef; }

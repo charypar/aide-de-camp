@@ -1,3 +1,4 @@
+use crate::document;
 use crate::state_dir::StateDirectory;
 use anyhow::{Result, bail};
 use review_core::*;

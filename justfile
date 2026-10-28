@@ -59,6 +59,10 @@ setup-browser:
 test-browser: build
     npx playwright test
 
+# Measure cold/warm review rendering with 9,800 source lines in ten language variants.
+bench-review-render: build-ui
+    cargo test --release --locked -p review-server rendering_performance -- --ignored --nocapture
+
 # Exercise the real Codex session and configured MCPs; uses your normal account.
 test-live:
     cargo test --locked -p review-server live_codex -- --ignored --nocapture

@@ -1,5 +1,28 @@
 # Guided review — product plan
 
+## Syntax colour contrast and separation — 2026-10-28
+
+Use a custom light syntax palette with distinct saturated hues: magenta keywords/macros, blue functions, ochre types, green strings, orange numbers, teal properties, and red tags. This is application CSS rather than a named Arborium theme; Arborium supplies token categories. Near-white green/red diff backgrounds leave more room for brighter, distinguishable token colours. Soft green/rose 3px left borders identify insertions/deletions and remain independent of the adjacent selection/feedback indicators. Context rows reserve the same border width to preserve alignment. The gutters are deliberately muted after visual feedback; the accepted text colours and row backgrounds remain unchanged. Retain pale blue selection and a light feedback tint. The user's preference for clearer token colours supersedes the earlier 7:1 and 4.5:1 targets; maintain a 3.5:1 floor even under combined selection and feedback.
+
+Verification: the multilingual browser acceptance test passes with computed-style contrast and persistent gutter checks across normal/diff/selection/feedback combinations, plus token selection, chat, feedback, restart restoration, and export. Code dragging/reverse Shift-click and old/new-side diff selection tests also pass. Headless Playwright MCP independently checked the brighter colours, visual appearance, and gutter visibility with selection/feedback. The UI and packaged development server were rebuilt. This CSS-only change does not alter parsing or native harness integration.
+
+## Syntax highlighting — 2026-10-28
+
+Arborium is the accepted highlighting engine. Priorities are readable language-aware colouring and opening the review without a noticeable highlighting wait.
+
+- The native server renders highlighted walkthrough HTML; grammars and parser code stay out of the Leptos/WASM bundle. Shared Markdown/chat rendering remains in `review-core`; source-aware guide rendering now lives in `review-server`.
+- Bundle Rust, TypeScript/TSX, Markdown, TOML, YAML, Terraform/HCL, Swift, Kotlin, C#, Bash, C/C++, CSS/SCSS, Dart, Dockerfile, Elixir, Go, GraphQL, HTML, INI, Java, JavaScript/JSX, JSON, Lua, Make, Nix, PHP, Python, Ruby, Scala, SQL, Svelte, Vue, XML, and Zig. Detect the verified filename first and use the fence language as a fallback, including Terraform variable files and extensionless Dockerfiles/Makefiles.
+- Parse complete captured old/new sources independently. Removed rows use old-side tokens; added and context rows use new-side tokens. Clip spans into self-contained row HTML without changing text, line IDs, source mappings, feedback anchors, or export. Keep syntax foreground colours separate from diff and selection backgrounds.
+- Cache compiled grammars across renders and highlighted source versions within each render. Highlight at most 512 KiB per source version and 4 MiB across one guide render; larger/unsupported sources fall back to escaped text and retain verified selection. Unmapped snippets may be coloured but remain unselectable.
+- Arborium's bundled Markdown omits inline parsing. Register the upstream `tree-sitter-md` block and inline grammar pair through Arborium, covering emphasis, links, inline code, and fenced-language injections. The guide fence parser now respects matching markers/lengths, allowing longer outer fences around Markdown source containing triple backticks.
+- Scope is walkthrough snippets. Chat Markdown and the raw “All reviewed changes” disclosure retain their existing rendering.
+
+Verification: 41 Rust tests and all 25 headless review browser tests pass, including language fixtures, multiline/Unicode/CRLF handling, source-side correctness, safe escaping, limits/fallback, selection from nested token spans, chat quotation, feedback, restart restoration, and export. Formatting and native/UI Clippy pass. Separate headless Playwright MCP verified coloured diff rows, old-side feedback, new-side chat references, refresh restoration, and visual appearance. Native Codex configuration/protocol is unchanged and its live integration check was not rerun.
+
+An additional Clippy run with `--all-targets` encounters an existing `items_after_test_module` warning in `review-server/src/state_dir.rs`; the standard native and WASM lint commands pass. That unrelated module was not changed.
+
+Performance on the development machine, release build: 9,800 source lines across ten language variants, 100 excerpts and 490 displayed rows rendered in approximately 546 ms cold and 179 ms with grammars cached. Opening/refreshing an already prepared review reuses the HTML; the separate 58-row browser fixture was restored in roughly 70 ms after reload. These are local observations, not universal thresholds. `just bench-review-render` reproduces the native benchmark.
+
 ## Command integration — implemented
 
 The standalone executable is now `aide-review`, retaining the existing subcommands and options. The coordination CLI provides `aide review` for the current repository and `aide task review <task-id>` to resolve and review a task workspace. Both launch the same independent tool with its existing state, backing agent, browser UI, and feedback output. No project registration or dashboard is required for standalone/current-repository review. Starting a review does not complete a task or automatically hand feedback to its implementation conversation. Historical `review` command examples below now refer to `aide-review`. Existing saved review state remains compatible.

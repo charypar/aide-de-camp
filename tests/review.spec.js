@@ -37,6 +37,109 @@ async function selectProse(page) {
   return quote;
 }
 
+test('syntax colours preserve exact multilingual source, token selection, feedback and restoration', async ({page}) => {
+  const samples = JSON.parse(readFileSync('tests/fixtures/syntax.json', 'utf8'));
+  const dir = fixture();
+  for (const sample of samples) writeFileSync(join(dir, sample.path), sample.source);
+  let server = await start(dir);
+  try {
+    await ready(page, server.url);
+    for (const sample of samples) {
+      const rows = page.locator(`.code-line[data-file="${sample.path}"] code`);
+      expect(await rows.allTextContents()).toEqual(sample.source.trimEnd().split('\n'));
+      const tokens = rows.locator(`.syntax-${sample.category}`);
+      expect((await tokens.allTextContents()).join(' ')).toContain(sample.token);
+      const styles = await tokens.first().evaluate(el => ({ colour: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor, base: getComputedStyle(el.closest('code')).color }));
+      expect(styles.colour).not.toBe(styles.base);
+      expect(styles.background).toBe('rgba(0, 0, 0, 0)');
+    }
+    await expect(page.locator('#guide script')).toHaveCount(0);
+    await expect(page.locator('#guide .unmapped')).toHaveCount(0);
+
+    // Measure the rendered palette against actual CSS backgrounds, including the
+    // uniform feedback overlay. The probe leaves real source rows and anchors intact.
+    const contrast = await page.locator('.code-rows').first().evaluate(container => {
+      const rgb = value => value.match(/[\d.]+/g).map(Number);
+      const luminance = colour => colour.slice(0, 3).reduce((sum, value, i) => {
+        const channel = value / 255;
+        return sum + [0.2126, 0.7152, 0.0722][i] * (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+      }, 0);
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;visibility:hidden';
+      const code = document.createElement('code');
+      const classes = new Set([...document.querySelectorAll('#guide code [class^="syntax-"]')].map(el => el.className));
+      for (const name of classes) {
+        const span = document.createElement('span'); span.className = name; code.append(span);
+      }
+      probe.append(code); container.append(probe);
+      const results = [];
+      const gutters = [];
+      try {
+        for (const kind of ['context', 'added', 'removed']) for (const selected of [false, true]) for (const feedback of [false, true]) {
+          probe.className = `code-line ${kind}`;
+          probe.dataset.selected = String(selected); probe.dataset.feedback = String(feedback);
+          let element = probe;
+          while (getComputedStyle(element).backgroundColor === 'rgba(0, 0, 0, 0)') element = element.parentElement;
+          let background = rgb(getComputedStyle(element).backgroundColor);
+          const overlay = getComputedStyle(probe).backgroundImage.match(/rgba?\([^)]+\)/);
+          if (overlay) {
+            const tint = rgb(overlay[0]);
+            background = background.map((value, i) => tint[i] * tint[3] + value * (1 - tint[3]));
+          }
+          const border = getComputedStyle(probe);
+          gutters.push({ kind, colour: border.borderLeftColor, width: border.borderLeftWidth,
+            ratio: (luminance(background) + 0.05) / (luminance(rgb(border.borderLeftColor)) + 0.05) });
+          for (const token of [code, ...code.children]) {
+            const foreground = rgb(getComputedStyle(token).color);
+            results.push({ token: token.className || 'plain', kind, selected, feedback, ratio: (luminance(background) + 0.05) / (luminance(foreground) + 0.05) });
+          }
+        }
+      } finally { probe.remove(); }
+      return { tokens: results, gutters };
+    });
+    for (const result of contrast.tokens) expect(result.ratio, JSON.stringify(result)).toBeGreaterThanOrEqual(3.5);
+    for (const kind of ['added', 'removed']) {
+      const gutters = contrast.gutters.filter(gutter => gutter.kind === kind);
+      // Diff markers remain visible and unchanged under selection and feedback.
+      expect(new Set(gutters.map(gutter => gutter.colour)).size).toBe(1);
+      for (const gutter of gutters) {
+        expect(gutter.width).toBe('3px');
+        expect(gutter.ratio).toBeGreaterThanOrEqual(1.5);
+        expect(gutter.colour).not.toBe('rgba(0, 0, 0, 0)');
+      }
+    }
+    expect(contrast.gutters.find(gutter => gutter.kind === 'added').colour)
+      .not.toBe(contrast.gutters.find(gutter => gutter.kind === 'removed').colour);
+
+    const token = page.locator('.code-line[data-file="sample.ts"][data-line="2"] .syntax-function').first();
+    await token.click();
+    await expect(page.getByRole('toolbar')).toHaveAttribute('data-reference', 'sample.ts:2-2 (new)');
+    await page.getByRole('button', {name:'Discuss with agent', exact:true}).click();
+    await page.getByRole('textbox', {name:'Ask Codex', exact:true}).fill('Explain the generic parameter.');
+    await page.getByRole('button', {name:'Send', exact:true}).click();
+    await expect(page.locator('.message.user .message-reference')).toContainText('export function greet<T extends string>');
+    await token.click();
+    await page.getByRole('button', {name:'Add feedback', exact:true}).click();
+    await page.getByRole('textbox', {name:'Feedback comment'}).fill('Keep this generic signature.');
+    await page.getByRole('button', {name:'Record feedback'}).click();
+    await saved(page);
+    const port = server.port;
+    await stop(server);
+    server = await start(dir, port);
+    await page.reload();
+    await expect(token).toBeVisible();
+    await expect(page.locator('.code-line[data-file="sample.ts"][data-line="2"]')).toHaveAttribute('data-feedback', 'true');
+    await expect(page.locator('.feedback-card')).toContainText('Keep this generic signature.');
+    await page.getByRole('button', {name:'Overall feedback', exact:false}).click();
+    await page.getByRole('button', {name:'Submit review'}).click();
+    await expect.poll(() => server.child.exitCode).toBe(0);
+    const output = readFileSync(join(dir, readdirSync(dir).find(name => name.startsWith('review-feedback-'))), 'utf8');
+    expect(output).toContain('sample.ts:2-2');
+    expect(output).toContain('Keep this generic signature.');
+    expect(output).not.toContain('syntax-');
+  } finally { await stop(server); }
+});
+
 test('selection actions, separate context, categories, drafts, restart and direct export', async ({page}) => {
   const dir=fixture(); let server=await start(dir);
   try {

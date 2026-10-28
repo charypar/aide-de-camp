@@ -24,6 +24,18 @@ rust-embed = { version = "8", features = ["debug-embed", "interpolate-folder-pat
 mime_guess = "2"
 webbrowser = "1"
 fs2 = "0.4"
+arborium = { version = "2.18.2", default-features = false, features = [
+    "lang-bash", "lang-c", "lang-c-sharp", "lang-cpp", "lang-css",
+    "lang-dart", "lang-dockerfile", "lang-elixir", "lang-go", "lang-graphql",
+    "lang-hcl", "lang-html", "lang-ini", "lang-java", "lang-javascript",
+    "lang-json", "lang-kotlin", "lang-lua", "lang-make",
+    "lang-nix", "lang-php", "lang-python", "lang-ruby", "lang-rust",
+    "lang-scala", "lang-scss", "lang-sql", "lang-svelte", "lang-swift",
+    "lang-toml", "lang-tsx", "lang-typescript", "lang-vue", "lang-xml",
+    "lang-yaml", "lang-zig",
+] }
+# Supply both Markdown block and inline grammars to Arborium (bold, links, inline code).
+tree-sitter-md = "0.5.4"
 
 [dev-dependencies]
 tempfile = "3"
