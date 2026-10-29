@@ -70,7 +70,7 @@ impl Manager {
                         view.repositories = repositories;
                         view.tasks = futures_util::stream::iter(tasks)
                             .map(|t| async {
-                                let mut view = self.runtime.view(t).await;
+                                let mut view = self.runtime.project_view(Path::new(&root), t).await;
                                 view.terminal_activity = activity.for_task(&view.task);
                                 view
                             })
@@ -116,8 +116,8 @@ impl Manager {
             } => {
                 let root = project.clone();
                 let key = id.clone();
-                let task = tokio::task::spawn_blocking(move || {
-                    workspace::start(
+                let (task, transition) = tokio::task::spawn_blocking(move || {
+                    workspace::start_managed(
                         &Project::open(Path::new(&root))?,
                         &key,
                         repository.as_deref(),
@@ -125,7 +125,17 @@ impl Manager {
                 })
                 .await??;
                 let mut project = Project::open(Path::new(&project))?;
-                self.runtime.ensure(&mut project, &task, false).await?;
+                if let Err(error) = self
+                    .runtime
+                    .repair_locked(&mut project, &task, false, None, &transition)
+                    .await
+                {
+                    project.update(&task.id, |t| {
+                        t.error = Some(format!("Startup failed: {error}"))
+                    })?;
+                    return Err(error);
+                }
+                drop(transition);
                 if open_terminal {
                     self.runtime.attach(&project, &task, true)?;
                 }

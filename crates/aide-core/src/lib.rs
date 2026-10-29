@@ -14,6 +14,7 @@ pub enum Lifecycle {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
+    Starting,
     Closing,
     Working,
     Waiting,

@@ -130,7 +130,8 @@ impl Project {
         // Additive metadata remains compatible with task workers from an older
         // installation, which may still rewrite the original task JSON.
         db.execute_batch(
-            "CREATE TABLE IF NOT EXISTS task_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS task_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS task_startups(id TEXT PRIMARY KEY)",
         )?;
         Ok(Self { root, db })
     }
@@ -151,6 +152,30 @@ impl Project {
         fs::create_dir_all(&directory)?;
         Lock::acquire(&directory.join(format!("{id}.lock"))).with_context(|| {
             format!("Task {id} is busy; retry when its current operation finishes")
+        })
+    }
+    pub fn begin_startup(&self, id: &str) -> Result<()> {
+        self.db
+            .execute("INSERT OR IGNORE INTO task_startups VALUES(?)", [id])?;
+        Ok(())
+    }
+    pub fn finish_startup(&self, id: &str) -> Result<()> {
+        self.db
+            .execute("DELETE FROM task_startups WHERE id=?", [id])?;
+        Ok(())
+    }
+    pub fn startup_pending(&self, id: &str) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_startups WHERE id=?)",
+            [id],
+            |row| row.get(0),
+        )?)
+    }
+    pub fn task_busy(&self, id: &str) -> bool {
+        self.task_lock(id).err().is_some_and(|error| {
+            error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock)
         })
     }
     fn transaction(&self) -> Result<Transaction<'_>> {

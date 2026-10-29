@@ -50,6 +50,121 @@ test('task creation, native status, focus, confirmation and retained history',as
  }finally{await stop(server);cleanup(f);}
 });
 
+test('startup stays neutral through preparation, backend launch and reload',async({page})=>{
+ const f=fixture(),prepare=join(f.dir,'prepare.hold'),startup=join(f.dir,'startup.hold');
+ f.env.AIDE_FIXTURE_PREPARE_GATE=prepare;f.env.AIDE_FIXTURE_STARTUP_GATE=startup;
+ writeFileSync(prepare,'hold');writeFileSync(startup,'hold');
+ const server=await manager(f),statuses=[];
+ page.on('websocket',ws=>ws.on('framereceived',({payload})=>{
+  const event=JSON.parse(payload.toString());
+  if(event.type==='snapshot')for(const project of event.projects)for(const task of project.tasks)statuses.push(task.status);
+ }));
+ try{
+  await page.goto(server.url);
+  await page.getByRole('button',{name:'New task'}).click();
+  await page.getByLabel('Task ID').fill('starting');
+  await page.getByRole('button',{name:'Start and open Codex'}).click();
+  const row=taskRow(page,'starting');
+  await expect(row.locator('.task-status')).toHaveText('Starting');
+  await expect(row.locator('.task-status')).toHaveAttribute('title','Preparing workspace');
+  await expect(page).toHaveTitle('Aide de camp');
+  await row.getByRole('button',{name:/starting/}).click();
+  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toHaveCount(0);
+  await expect(row.getByRole('button',{name:'Recover session'})).toHaveCount(0);
+  await expect(row.getByRole('button',{name:'Close task'})).toHaveCount(0);
+  await page.reload();
+  await expect(row.locator('.task-status')).toHaveText('Starting');
+  unlinkSync(prepare);
+  await expect.poll(()=>existsSync(join(f.dir,'startup.entered'))).toBe(true);
+  await expect(row.locator('.task-status')).toHaveAttribute('title','Starting Codex');
+  await expect(page).toHaveTitle('Aide de camp');
+  expect(f.run(binary,['task','list'])).toContain('Starting');
+  await page.reload();
+  await expect(row.locator('.task-status')).toHaveText('Starting');
+  unlinkSync(startup);
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toBeVisible();
+  await expect(page).toHaveTitle('(0·1) Aide de camp');
+  expect(statuses).toContain('starting');expect(statuses).not.toContain('attention');
+ }finally{for(const gate of [prepare,startup])if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
+});
+
+test('failed backend startup requires attention and recovers',async({page})=>{
+ const f=fixture(),gate=join(f.dir,'startup.hold');
+ f.env.AIDE_FIXTURE_STARTUP_GATE=gate;
+ writeFileSync(gate,'hold');writeFileSync(join(f.dir,'startup.fail'),'fail');
+ const server=await manager(f);
+ try{
+  await page.goto(server.url);
+  await page.getByRole('button',{name:'New task'}).click();
+  await page.getByLabel('Task ID').fill('failed-start');
+  await page.getByRole('button',{name:'Start and open Codex'}).click();
+  const row=taskRow(page,'failed-start');
+  await expect(row.locator('.task-status')).toHaveText('Starting');
+  unlinkSync(gate);
+  await expect(row.locator('.task-status')).toHaveText('Requires attention');
+  await expect(row.locator('.task-status')).toHaveAttribute('title',/Startup failed.*Retry Recover session/);
+  await expect(page).toHaveTitle('(1·0) Aide de camp');
+  await page.reload();
+  await expect(row.locator('.task-status')).toHaveText('Requires attention');
+  unlinkSync(join(f.dir,'startup.fail'));
+  await row.getByRole('button',{name:/failed-start/}).click();
+  await row.getByRole('button',{name:'Open terminal',exact:true}).click();
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+  await expect(page).toHaveTitle('(0·1) Aide de camp');
+ }finally{if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
+});
+
+test('manager interruption during startup requires attention after restart and can recover',async({page})=>{
+ const f=fixture(),gate=join(f.dir,'startup.hold');
+ f.env.AIDE_FIXTURE_STARTUP_GATE=gate;writeFileSync(gate,'hold');
+ let server=await manager(f);
+ try{
+  await page.goto(server.url);
+  await page.getByRole('button',{name:'New task'}).click();
+  await page.getByLabel('Task ID').fill('interrupted-start');
+  await page.getByRole('button',{name:'Start and open Codex'}).click();
+  const row=taskRow(page,'interrupted-start');
+  await expect.poll(()=>existsSync(join(f.dir,'startup.entered'))).toBe(true);
+  await expect(row.locator('.task-status')).toHaveText('Starting');
+  await stop(server,'SIGKILL');
+  unlinkSync(gate);
+  server=await manager(f);
+  await page.goto(server.url);
+  await expect(row.locator('.task-status')).toHaveText('Requires attention');
+  await expect(row.locator('.task-status')).toHaveAttribute('title',/Startup interrupted.*Recover session/);
+  await expect(page).toHaveTitle('(1·0) Aide de camp');
+  await row.getByRole('button',{name:'Open terminal',exact:true}).click();
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+  await expect(page).toHaveTitle('(0·1) Aide de camp');
+ }finally{if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
+});
+
+test('failed preparation remains visible and can retry the same task ID',async({page})=>{
+ const f=fixture(),gate=join(f.dir,'prepare.hold');
+ f.env.AIDE_FIXTURE_PREPARE_GATE=gate;
+ writeFileSync(gate,'hold');writeFileSync(join(f.dir,'prepare.fail'),'fail');
+ const server=await manager(f);
+ try{
+  await page.goto(server.url);
+  await page.getByRole('button',{name:'New task'}).click();
+  await page.getByLabel('Task ID').fill('retry-start');
+  await page.getByRole('button',{name:'Start and open Codex'}).click();
+  const row=taskRow(page,'retry-start');
+  await expect(row.locator('.task-status')).toHaveText('Starting');
+  unlinkSync(gate);
+  await expect(row.locator('.task-status')).toHaveText('Requires attention');
+  await expect(row.locator('.task-status')).toHaveAttribute('title',/Fixture preparation failure/);
+  await page.reload();
+  await expect(row.locator('.task-status')).toHaveText('Requires attention');
+  unlinkSync(join(f.dir,'prepare.fail'));
+  await page.getByRole('button',{name:'New task'}).click();
+  await page.getByLabel('Task ID').fill('retry-start');
+  await page.getByRole('button',{name:'Start and open Codex'}).click();
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+ }finally{if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
+});
+
 test('closing retains its title without attention, and interrupted cleanup can be retried',async({page})=>{
  const f=fixture(),gate=join(f.dir,'cleanup.hold');
  f.env.AIDE_FIXTURE_CLEANUP_GATE=gate;

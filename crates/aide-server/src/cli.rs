@@ -181,8 +181,7 @@ pub async fn run() -> Result<()> {
                             continue;
                         }
                         let terminal = activity.for_task(&task);
-                        let mut view = runtime.view(task).await;
-                        Runtime::refresh_lifecycle(&project, &mut view);
+                        let view = runtime.project_view(&project.root, task).await;
                         println!(
                             "{}\t{:?}\t{}\t{}\tterminal={}",
                             view.task.id,

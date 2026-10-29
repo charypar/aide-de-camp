@@ -89,7 +89,29 @@ pub fn valid_id(id: &str) -> Result<()> {
 
 pub fn start(project: &Project, id: &str, repository: Option<&str>) -> Result<Task> {
     valid_id(id)?;
-    let _task = project.task_lock(id)?;
+    let transition = project.task_lock(id)?;
+    prepare(project, id, repository, false, &transition)
+}
+
+/// Keep startup ownership across workspace creation and runtime launch.
+pub fn start_managed(
+    project: &Project,
+    id: &str,
+    repository: Option<&str>,
+) -> Result<(Task, Lock)> {
+    valid_id(id)?;
+    let transition = project.task_lock(id)?;
+    let task = prepare(project, id, repository, true, &transition)?;
+    Ok((task, transition))
+}
+
+fn prepare(
+    project: &Project,
+    id: &str,
+    repository: Option<&str>,
+    managed: bool,
+    _transition: &Lock,
+) -> Result<Task> {
     let repositories = project.repositories()?;
     let repo = match repository {
         Some(name) => repositories
@@ -147,6 +169,9 @@ pub fn start(project: &Project, id: &str, repository: Option<&str>) -> Result<Ta
     if task.repository != repo.name {
         bail!("Retry using the original repository");
     }
+    if managed {
+        project.begin_startup(id)?;
+    }
     let destination = Path::new(&task.workspace);
     if destination.exists() {
         // A crashed add may have completed before its final database write.
@@ -184,6 +209,9 @@ pub fn start(project: &Project, id: &str, repository: Option<&str>) -> Result<Ta
     task.lifecycle = Lifecycle::Open;
     task.error = None;
     project.save(&task)?;
+    if !managed {
+        project.finish_startup(id)?;
+    }
     Ok(task)
 }
 

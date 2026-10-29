@@ -41,6 +41,14 @@ def handshake(conn, client=False):
 args=sys.argv[1:]
 if '--version' in args:print('codex fixture');sys.exit()
 if args and args[0]=='app-server':
+    if os.environ.get('AIDE_FIXTURE_STARTUP_GATE'):
+        gate=Path(os.environ['AIDE_FIXTURE_STARTUP_GATE'])
+        gate.with_suffix('.entered').write_text('startup')
+        deadline=time.monotonic()+45
+        while gate.exists():
+            if time.monotonic()>deadline:sys.exit('Fixture startup gate timed out')
+            time.sleep(.05)
+        if gate.with_suffix('.fail').exists():sys.exit('Fixture backend startup failure')
     endpoint=args[args.index('--listen')+1][7:]
     server=socket.socket(socket.AF_UNIX);server.bind(endpoint);server.listen()
     Path('.fixture-backend.json').write_text(json.dumps({'pid':os.getpid(), 'environment':{k:v for k,v in os.environ.items() if k.startswith('AIDE_TEST_')}}))

@@ -102,7 +102,7 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
                 <button class="primary" type="submit" disabled=move || !cx.connected.get() || selected_repository.get().is_empty()>"Start and open Codex"</button>
             </form></Show>
             <p class="error">{move || project.get().and_then(|p| p.error)}</p>
-            { [Status::Attention, Status::Waiting, Status::Working, Status::Closing, Status::Completed].into_iter().map(move |status| {
+            { [Status::Attention, Status::Waiting, Status::Working, Status::Starting, Status::Closing, Status::Completed].into_iter().map(move |status| {
                 let group = status.clone();
                 let list = Memo::new(move |_| project.get().map(|p| p.tasks.into_iter().filter(|t| t.status == group && (completed.get() || t.task.lifecycle != Lifecycle::Completed)).map(|t| t.task.id).collect::<Vec<_>>()).unwrap_or_default());
                 view! { <Show when=move || !list.get().is_empty()><h3>{label(&status)}</h3><For each=move || list.get() key=|id| id.clone() children={move |id| view!{<Task root=root.get_value() id=id/>}}/></Show> }
@@ -197,7 +197,8 @@ fn Task(root: String, id: String) -> impl IntoView {
     };
     let is_open = move || {
         task.get().is_some_and(|t| {
-            t.task.lifecycle != Lifecycle::Completed && t.status != Status::Closing
+            t.task.lifecycle != Lifecycle::Completed
+                && !matches!(t.status, Status::Starting | Status::Closing)
         })
     };
     let terminal_activity = move || terminal_label(task.get().and_then(|t| t.terminal_activity));
@@ -253,6 +254,7 @@ fn terminal_label(activity: Option<TerminalActivity>) -> &'static str {
 
 fn status_name(status: &Status) -> &'static str {
     match status {
+        Status::Starting => "starting",
         Status::Closing => "closing",
         Status::Attention => "attention",
         Status::Working => "working",
@@ -263,6 +265,7 @@ fn status_name(status: &Status) -> &'static str {
 
 fn label(status: &Status) -> &'static str {
     match status {
+        Status::Starting => "Starting",
         Status::Closing => "Closing",
         Status::Attention => "Requires attention",
         Status::Working => "Working",

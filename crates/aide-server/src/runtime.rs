@@ -57,7 +57,18 @@ impl Runtime {
         recovered: bool,
         environment: Option<aide_core::Environment>,
     ) -> Result<()> {
-        let _transition = project.task_lock(&task.id)?;
+        let transition = project.task_lock(&task.id)?;
+        self.repair_locked(project, task, recovered, environment, &transition)
+            .await
+    }
+    pub(crate) async fn repair_locked(
+        &self,
+        project: &mut Project,
+        task: &Task,
+        recovered: bool,
+        environment: Option<aide_core::Environment>,
+        _transition: &Lock,
+    ) -> Result<()> {
         if task.lifecycle != Lifecycle::Open {
             bail!("Only open tasks can run");
         }
@@ -104,6 +115,17 @@ impl Runtime {
             })?;
         }
         terminal.ensure_work()?;
+        if project.startup_pending(&task.id)? {
+            project.update(&task.id, |t| {
+                if t.error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("Startup failed:"))
+                {
+                    t.error = None;
+                }
+            })?;
+            project.finish_startup(&task.id)?;
+        }
         Ok(())
     }
     pub fn attach(&self, project: &Project, task: &Task, new_window: bool) -> Result<()> {
@@ -141,6 +163,25 @@ impl Runtime {
         self.tmux(&["detach-client"])?;
         Ok(())
     }
+    pub async fn project_view(&self, root: &Path, task: Task) -> TaskView {
+        // Each concurrent observer owns its database connection across awaits.
+        let Ok(project) = Project::open(root) else {
+            return self.view(task).await;
+        };
+        let starting = project.startup_pending(&task.id).unwrap_or(false);
+        let mut view = self.view(task).await;
+        // Startup may finish while observing the backend. Refresh observations
+        // as well as metadata so an old missing-backend result cannot flash.
+        if let Ok(current) = project.task(&view.task.id)
+            && (current != view.task
+                || starting != project.startup_pending(&current.id).unwrap_or(false))
+        {
+            view = self.view(current).await;
+        }
+        Self::refresh_lifecycle(&project, &mut view);
+        view
+    }
+
     pub async fn view(&self, task: Task) -> TaskView {
         let terminal_alive = self.alive(&task);
         let mut view = TaskView {
@@ -218,11 +259,7 @@ impl Runtime {
         match view.task.lifecycle {
             Lifecycle::Closing => {
                 view.summary = project.task_summary(&view.task.id).ok().flatten();
-                let busy = project.task_lock(&view.task.id).err().is_some_and(|error| {
-                    error
-                        .downcast_ref::<std::io::Error>()
-                        .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock)
-                });
+                let busy = project.task_busy(&view.task.id);
                 if busy {
                     view.status = Status::Closing;
                     view.reason = "Closing task".into();
@@ -247,7 +284,43 @@ impl Runtime {
                 view.status = Status::Completed;
                 view.reason = "Completed".into();
             }
-            _ => {}
+            Lifecycle::Preparing | Lifecycle::Open => {
+                let preparing = view.task.lifecycle == Lifecycle::Preparing;
+                let pending = project.startup_pending(&view.task.id).unwrap_or(false);
+                if preparing || pending {
+                    if project.task_busy(&view.task.id) {
+                        view.status = Status::Starting;
+                        view.reason = if preparing {
+                            "Preparing workspace"
+                        } else {
+                            "Starting Codex"
+                        }
+                        .into();
+                    } else {
+                        // Startup can complete between reading metadata and
+                        // checking ownership. Do not classify success as interruption.
+                        if let Ok(current) = project.task(&view.task.id)
+                            && current.lifecycle == Lifecycle::Open
+                            && !project.startup_pending(&current.id).unwrap_or(false)
+                        {
+                            view.task = current;
+                            view.status = Status::Starting;
+                            view.reason = "Finishing startup".into();
+                            return;
+                        }
+                        view.status = Status::Attention;
+                        let retry = if preparing {
+                            "Retry Start with the same task ID"
+                        } else {
+                            "Retry Recover session"
+                        };
+                        view.reason = match &view.task.error {
+                            Some(error) => format!("{error}. {retry}"),
+                            None => format!("Startup interrupted; {retry}"),
+                        };
+                    }
+                }
+            }
         }
     }
     pub async fn recover(&self, project: &mut Project, task: &Task) -> Result<()> {
@@ -353,6 +426,83 @@ fn native_status(value: &serde_json::Value) -> (Status, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn startup_survives_reopen_and_worker_writes_and_detects_interruption() -> Result<()> {
+        let (_temp, home, project) = workspace::tests::fixture()?;
+        let (task, transition) = workspace::start_managed(&project, "starting", None)?;
+        let runtime = Runtime::new(&home);
+        let reopened = Project::open(&project.root)?;
+        // Older workers can rewrite task JSON without erasing startup metadata.
+        reopened.save(&task)?;
+        let view = runtime.project_view(&reopened.root, task.clone()).await;
+        assert_eq!(view.status, Status::Starting);
+        assert_eq!(view.reason, "Starting Codex");
+        assert!(project.task_lock(&task.id).is_err());
+
+        drop(transition);
+        let view = runtime.project_view(&reopened.root, task.clone()).await;
+        assert_eq!(view.status, Status::Attention);
+        assert!(view.reason.contains("Retry Recover session"));
+
+        let transition = project.task_lock(&task.id)?;
+        project.finish_startup(&task.id)?;
+        drop(transition);
+        let view = runtime.project_view(&reopened.root, task).await;
+        assert_eq!(view.status, Status::Waiting);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn preparation_and_startup_override_stale_observations_but_keep_failures() -> Result<()> {
+        let (_temp, home, project) = workspace::tests::fixture()?;
+        let task = workspace::start(&project, "preparing", None)?;
+        let runtime = Runtime::new(&home);
+        let mut stale = runtime.view(task.clone()).await;
+        let transition = project.task_lock(&task.id)?;
+        project.update(&task.id, |t| t.lifecycle = Lifecycle::Preparing)?;
+        Runtime::refresh_lifecycle(&project, &mut stale);
+        assert_eq!(stale.status, Status::Starting);
+        assert_eq!(stale.reason, "Preparing workspace");
+
+        project.update(&task.id, |t| {
+            t.error = Some("Workspace creation failed".into())
+        })?;
+        drop(transition);
+        Runtime::refresh_lifecycle(&project, &mut stale);
+        assert_eq!(stale.status, Status::Attention);
+        assert_eq!(
+            stale.reason,
+            "Workspace creation failed. Retry Start with the same task ID"
+        );
+
+        let transition = project.task_lock(&task.id)?;
+        project.begin_startup(&task.id)?;
+        project.update(&task.id, |t| {
+            t.lifecycle = Lifecycle::Open;
+            t.desired_running = true;
+            t.error = None;
+        })?;
+        Runtime::refresh_lifecycle(&project, &mut stale);
+        assert_eq!(stale.status, Status::Starting);
+        project.update(&task.id, |t| {
+            t.error = Some("Backend failed to start; retry recovery".into())
+        })?;
+        drop(transition);
+        Runtime::refresh_lifecycle(&project, &mut stale);
+        assert_eq!(stale.status, Status::Attention);
+        assert_eq!(
+            stale.reason,
+            "Backend failed to start; retry recovery. Retry Recover session"
+        );
+
+        let transition = project.task_lock(&task.id)?;
+        project.update(&task.id, |t| t.lifecycle = Lifecycle::Closing)?;
+        Runtime::refresh_lifecycle(&project, &mut stale);
+        assert_eq!(stale.status, Status::Closing);
+        drop(transition);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn cleanup_overrides_stale_observation_and_preserves_title_after_reopen() -> Result<()> {
         let (_temp, home, project) = workspace::tests::fixture()?;

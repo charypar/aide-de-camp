@@ -13,6 +13,14 @@ if sys.argv[1:3] == ['git', 'fetch'] and os.environ.get('AIDE_FIXTURE_FETCH_GATE
         while gate.exists():
             if time.monotonic()>deadline:sys.exit('Fixture fetch gate timed out')
             time.sleep(.05)
+if sys.argv[1:3] == ['workspace', 'add'] and os.environ.get('AIDE_FIXTURE_PREPARE_GATE'):
+    gate=Path(os.environ['AIDE_FIXTURE_PREPARE_GATE'])
+    gate.with_suffix('.entered').write_text('prepare')
+    deadline=time.monotonic()+45
+    while gate.exists():
+        if time.monotonic()>deadline:sys.exit('Fixture preparation gate timed out')
+        time.sleep(.05)
+    if gate.with_suffix('.fail').exists():sys.exit('Fixture preparation failure')
 if sys.argv[1:3] == ['workspace', 'forget'] and os.environ.get('AIDE_FIXTURE_CLEANUP_GATE'):
     gate=Path(os.environ['AIDE_FIXTURE_CLEANUP_GATE'])
     gate.with_suffix('.entered').write_text('cleanup')
