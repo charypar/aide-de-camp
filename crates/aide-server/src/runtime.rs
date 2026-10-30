@@ -141,11 +141,14 @@ impl Runtime {
         let target = task.session();
         if new_window {
             crate::terminal::Terminal::new(self, project, &task).open_window()?;
+            project.set_parked(&task.id, false)?;
         } else if std::env::var_os("TMUX").is_some() {
             self.tmux(&["switch-client", "-t", &target])?;
+            project.set_parked(&task.id, false)?;
         } else {
             // Attaching may last hours. Don't hold a lifecycle lock while the
             // user is attached; a concurrent close can terminate the session.
+            project.set_parked(&task.id, false)?;
             drop(transition);
             let status = crate::terminal::Terminal::command()
                 .args(["attach-session", "-t", &target])
@@ -179,7 +182,40 @@ impl Runtime {
             view = self.view(current).await;
         }
         Self::refresh_lifecycle(&project, &mut view);
+        if let Err(error) = Self::refresh_parking(&project, &mut view) {
+            view.status = Status::Attention;
+            view.reason = format!("Could not read task parking: {error}");
+        }
         view
+    }
+
+    pub async fn set_parked(&self, project: &mut Project, id: &str, parked: bool) -> Result<()> {
+        let _transition = project.task_lock(id)?;
+        let task = project.task(id)?;
+        if task.lifecycle != Lifecycle::Open || project.startup_pending(id)? {
+            bail!("Task is not open and ready");
+        }
+        if parked {
+            let view = self.view(task).await;
+            if view.status != Status::Waiting {
+                bail!("Only ready tasks can be parked");
+            }
+        }
+        project.set_parked(id, parked)
+    }
+
+    fn refresh_parking(project: &Project, view: &mut TaskView) -> Result<()> {
+        if !project.is_parked(&view.task.id)? {
+            return Ok(());
+        }
+        if view.status == Status::Waiting {
+            view.status = Status::Parked;
+            view.reason = "Parked — waiting for something external".into();
+        } else {
+            // Work, attention and lifecycle transitions permanently end parking.
+            project.set_parked(&view.task.id, false)?;
+        }
+        Ok(())
     }
 
     pub async fn view(&self, task: Task) -> TaskView {
@@ -426,6 +462,118 @@ fn native_status(value: &serde_json::Value) -> (Status, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn parking_survives_reload_and_older_workers_and_can_be_cleared() -> Result<()> {
+        let (_temp, home, mut project) = workspace::tests::fixture()?;
+        let task = workspace::start(&project, "parked", None)?;
+        let runtime = Runtime::new(&home);
+        runtime.set_parked(&mut project, &task.id, true).await?;
+        let reopened = Project::open(&project.root)?;
+        reopened.save(&task)?;
+
+        let view = runtime.project_view(&reopened.root, task.clone()).await;
+        assert_eq!(view.status, Status::Parked);
+        assert!(view.reason.contains("external"));
+        assert_eq!(view.task, task);
+
+        // Merely inspecting a parked task does not resume it.
+        assert_eq!(
+            runtime
+                .project_view(&project.root, task.clone())
+                .await
+                .status,
+            Status::Parked
+        );
+        runtime.set_parked(&mut project, &task.id, false).await?;
+        assert_eq!(
+            runtime.project_view(&project.root, task).await.status,
+            Status::Waiting
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parking_does_not_hide_work_attention_or_lifecycle_changes() -> Result<()> {
+        let (_temp, home, mut project) = workspace::tests::fixture()?;
+        let task = workspace::start(&project, "parked", None)?;
+        let runtime = Runtime::new(&home);
+        for status in [
+            Status::Working,
+            Status::Attention,
+            Status::Starting,
+            Status::Closing,
+            Status::Completed,
+        ] {
+            runtime.set_parked(&mut project, &task.id, true).await?;
+            let mut view = runtime.view(task.clone()).await;
+            view.status = status.clone();
+            let reason = view.reason.clone();
+            Runtime::refresh_parking(&project, &mut view)?;
+            assert_eq!(view.status, status);
+            assert_eq!(view.reason, reason);
+            assert!(!project.is_parked(&task.id)?);
+            assert_eq!(
+                runtime
+                    .project_view(&project.root, task.clone())
+                    .await
+                    .status,
+                Status::Waiting
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parking_rejects_unready_missing_and_busy_tasks() -> Result<()> {
+        let (_temp, home, mut project) = workspace::tests::fixture()?;
+        let task = workspace::start(&project, "parked", None)?;
+        let runtime = Runtime::new(&home);
+        assert!(
+            runtime
+                .set_parked(&mut project, "missing", true)
+                .await
+                .is_err()
+        );
+        let lock = project.task_lock(&task.id)?;
+        assert!(
+            runtime
+                .set_parked(&mut project, &task.id, true)
+                .await
+                .is_err()
+        );
+        drop(lock);
+        project.begin_startup(&task.id)?;
+        assert!(
+            runtime
+                .set_parked(&mut project, &task.id, true)
+                .await
+                .is_err()
+        );
+        project.finish_startup(&task.id)?;
+        project.update(&task.id, |t| t.error = Some("Needs attention".into()))?;
+        assert!(
+            runtime
+                .set_parked(&mut project, &task.id, true)
+                .await
+                .is_err()
+        );
+        for lifecycle in [
+            Lifecycle::Preparing,
+            Lifecycle::Closing,
+            Lifecycle::Completed,
+        ] {
+            project.update(&task.id, |t| t.lifecycle = lifecycle)?;
+            assert!(
+                runtime
+                    .set_parked(&mut project, &task.id, true)
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(!project.is_parked(&task.id)?);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn startup_survives_reopen_and_worker_writes_and_detects_interruption() -> Result<()> {
         let (_temp, home, project) = workspace::tests::fixture()?;

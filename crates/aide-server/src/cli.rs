@@ -85,6 +85,14 @@ enum TaskAction {
         new_window: bool,
     },
     Detach,
+    /// Set a ready task aside while waiting for something external.
+    Park {
+        id: String,
+    },
+    /// Return a parked task to the ready list.
+    Unpark {
+        id: String,
+    },
     #[command(hide = true)]
     Recover {
         id: String,
@@ -251,6 +259,14 @@ pub async fn run() -> Result<()> {
                     runtime.cleanup(&mut project, &id, true).await?;
                     println!("Closed {id}");
                 }
+                TaskAction::Park { id } => {
+                    runtime.set_parked(&mut project, &id, true).await?;
+                    println!("Parked {id}");
+                }
+                TaskAction::Unpark { id } => {
+                    runtime.set_parked(&mut project, &id, false).await?;
+                    println!("Unparked {id}");
+                }
                 TaskAction::Review { id, args } => {
                     let _transition = project.task_lock(&id)?;
                     let task = project.task(&id)?;
@@ -261,6 +277,7 @@ pub async fn run() -> Result<()> {
                     {
                         bail!("Task review uses the task workspace; --path cannot override it");
                     }
+                    project.set_parked(&id, false)?;
                     review(Path::new(&task.workspace), &args)?;
                 }
                 TaskAction::Detach => unreachable!(),

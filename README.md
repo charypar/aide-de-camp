@@ -48,6 +48,8 @@ aide                          # Start the dashboard and open the browser
 
 The dashboard lists tasks across registered projects, with status and actions to open their terminal, editor, or review. Select a project to focus on it; **Show completed** includes its task history. Project registration is CLI-only.
 
+Waiting on something external? Expand a Ready task and choose **Park task**. It moves to a muted Parked group and leaves the tab's Ready count. Parking survives reloads and manager restarts. Expanding details or copying a path leaves it parked; **Unpark task**, opening Terminal, Zed or Review, recovering/resuming its session, or observed Codex work/attention brings it back. Background terminal commands alone do not unpark it. CLI equivalents are `aide task park <id>` and `aide task unpark <id>`.
+
 Each task also shows **Terminal Idle / Working**, independently of Codex status and the tab's attention counts. This covers commands in all its tmux panes, including background jobs and servers while detached. Aide excludes its backend pane and managed Codex process trees; exiting Codex lets ordinary shell commands in that pane count again. `aide task list` includes the same activity. A dash means activity is unavailable. Detection observes processes: shell-only builtins and fully detached daemons may not be visible.
 
 ### Start, return to, and finish a task

@@ -25,6 +25,117 @@ async function stop(server,signal='SIGINT'){if(server.child.exitCode!==null||ser
 function taskRow(page,id){return page.locator('.task').filter({has:page.getByRole('button',{name:new RegExp(id)})});}
 function cleanup(f){try{f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'kill-server']);}catch{}}
 
+test('parking persists, keeps inspection passive and resumes through task actions',async({page})=>{
+ const f=fixture();let server=await manager(f);
+ try{
+  f.run(binary,['task','start','external','--workspace-only']);
+  await page.goto(server.url);
+  const row=taskRow(page,'external');
+  const expand=async()=>{
+   if(await row.locator('.task-title').getAttribute('aria-expanded')==='false')await row.locator('.task-title').click();
+  };
+  const park=async()=>{
+   await expand();await row.getByRole('button',{name:'Park task',exact:true}).click();
+   await expect(row.locator('.task-status')).toHaveText('Parked');
+   await expect(page).toHaveTitle('Aide de camp');
+  };
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+  await expect(row.getByRole('button',{name:'Park task',exact:true})).toHaveCount(0);
+  await park();
+  await expect(page.getByRole('heading',{name:'Ready',exact:true})).toHaveCount(0);
+  expect(f.run(binary,['task','list'])).toContain('Parked');
+  await expand();await row.getByRole('button',{name:'Copy path'}).click();
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  await page.reload();await expect(row.locator('.task-status')).toHaveText('Parked');
+  await stop(server);server=await manager(f);await page.goto(server.url);
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  await expand();await row.getByRole('button',{name:'Unpark task',exact:true}).click();
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+  await expect(page).toHaveTitle('(0·1) Aide de camp');
+
+  // Exercise real launch handlers with fixture executables instead of GUI apps.
+  writeFileSync(join(f.dir,'zed'),'#!/bin/sh\nexit 0\n',{mode:0o755});
+  f.env.PATH=`${f.dir}:${f.env.PATH}`;
+  await stop(server);server=await manager(f);await page.goto(server.url);
+  for(const action of ['Open Zed','Review','Open terminal']){
+   await park();await expand();await row.getByRole('button',{name:action,exact:true}).click();
+   await expect(row.locator('.task-status')).toHaveText('Ready');
+   await expect(page).toHaveTitle('(0·1) Aide de camp');
+  }
+  await park();
+  f.run(binary,['task','attach','external','--new-window']);
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+  f.run(binary,['task','park','external']);
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  f.run(binary,['task','unpark','external']);
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+  await park();await expand();await page.setViewportSize({width:390,height:844});
+  await expect(row.getByRole('button',{name:'Unpark task',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }finally{await stop(server);cleanup(f);}
+});
+
+test('parking ignores background commands and survives a failed workspace action',async({page})=>{
+ const f=fixture(),server=await manager(f);
+ try{
+  f.run(binary,['task','start','background','--new-window']);
+  await page.goto(server.url);
+  const row=taskRow(page,'background');
+  await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
+  f.run(binary,['task','park','background']);
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  const r=runtimeTools(f,'background');
+  r.tmux('new-window','-d','-t',r.session,'-n','server','sleep','120');
+  await expect(row.locator('.terminal-activity')).toHaveText('Working');
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  await expect(page).toHaveTitle('Aide de camp');
+
+  const marker=join(f.root,'repo-tasks','background','.jj','aide-owner');
+  const owner=readFileSync(marker,'utf8');
+  unlinkSync(marker);
+  await row.locator('.task-title').click();
+  await row.getByRole('button',{name:'Open Zed',exact:true}).click();
+  await expect(page.getByRole('status')).toContainText('ownership marker is missing');
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  writeFileSync(marker,owner);
+  await page.reload();await expect(row.locator('.task-status')).toHaveText('Parked');
+ }finally{await stop(server);cleanup(f);}
+});
+
+test('parked tasks reappear for Codex work, input and backend failure',async({page})=>{
+ const f=fixture(),server=await manager(f);
+ try{
+  f.run(binary,['task','start','wake','--new-window']);
+  await page.goto(server.url);
+  const row=taskRow(page,'wake'),workspace=join(f.root,'repo-tasks','wake');
+  await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
+  for(const [native,label,title] of [
+   [{type:'active',activeFlags:[]},'Working','Aide de camp'],
+   [{type:'active',activeFlags:['waitingOnApproval']},'Requires attention','(1·0) Aide de camp']
+  ]){
+   await expect(row.locator('.task-status')).toHaveText('Ready');
+   await row.locator('.task-title').click();await row.getByRole('button',{name:'Park task',exact:true}).click();
+   await expect(row.locator('.task-status')).toHaveText('Parked');
+   writeFileSync(join(workspace,'.fixture-status'),JSON.stringify(native));
+   await expect(row.locator('.task-status')).toHaveText(label);
+   await expect(page).toHaveTitle(title);
+   await row.locator('.task-title').click();
+   await expect(row.getByRole('button',{name:'Park task',exact:true})).toHaveCount(0);
+   expect(()=>f.run(binary,['task','park','wake'])).toThrow(/Only ready tasks/);
+   writeFileSync(join(workspace,'.fixture-status'),JSON.stringify({type:'idle'}));
+   await expect(row.locator('.task-status')).toHaveText('Ready');
+   await page.reload();await expect(row.locator('.task-status')).toHaveText('Ready');
+  }
+  await row.locator('.task-title').click();await row.getByRole('button',{name:'Park task',exact:true}).click();
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  const sessions=f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'list-sessions','-F','#{session_name}']).trim();
+  f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'send-keys','-t',`${sessions}:backend`,'C-c']);
+  await expect(row.locator('.task-status')).toHaveText('Requires attention');
+  await row.getByRole('button',{name:'Open terminal',exact:true}).click();
+  await expect(row.locator('.task-status')).toHaveText('Ready');
+ }finally{await stop(server);cleanup(f);}
+});
+
 test('task creation, native status, focus, confirmation and retained history',async({page})=>{
  const f=fixture();const server=await manager(f);
  try{

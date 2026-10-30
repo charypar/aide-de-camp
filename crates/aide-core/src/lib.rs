@@ -18,6 +18,7 @@ pub enum Status {
     Closing,
     Working,
     Waiting,
+    Parked,
     Attention,
     Completed,
 }
@@ -92,6 +93,11 @@ pub enum Command {
     Attach {
         project: String,
         id: String,
+    },
+    SetParked {
+        project: String,
+        id: String,
+        parked: bool,
     },
     Recover {
         project: String,

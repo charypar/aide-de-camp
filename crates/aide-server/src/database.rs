@@ -131,7 +131,8 @@ impl Project {
         // installation, which may still rewrite the original task JSON.
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS task_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS task_startups(id TEXT PRIMARY KEY)",
+             CREATE TABLE IF NOT EXISTS task_startups(id TEXT PRIMARY KEY);
+             CREATE TABLE IF NOT EXISTS task_parking(id TEXT PRIMARY KEY)",
         )?;
         Ok(Self { root, db })
     }
@@ -177,6 +178,24 @@ impl Project {
                 .downcast_ref::<std::io::Error>()
                 .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock)
         })
+    }
+    pub fn set_parked(&self, id: &str, parked: bool) -> Result<()> {
+        if parked {
+            self.db
+                .execute("INSERT OR IGNORE INTO task_parking VALUES(?)", [id])?;
+        } else {
+            self.db
+                .execute("DELETE FROM task_parking WHERE id=?", [id])?;
+        }
+        Ok(())
+    }
+
+    pub fn is_parked(&self, id: &str) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_parking WHERE id=?)",
+            [id],
+            |row| row.get(0),
+        )?)
     }
     fn transaction(&self) -> Result<Transaction<'_>> {
         Ok(Transaction::new_unchecked(

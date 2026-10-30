@@ -100,6 +100,7 @@ h3 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.8px; color: v
 .task-status[data-status=waiting] { color: #174bb5; background: #e4ecff; }
 .task-status[data-status=working] { color: var(--muted); background: transparent; }
 .task-status[data-status=completed] { color: var(--muted); background: var(--base); }
+.task-status[data-status=parked] { color: var(--muted); background: var(--base); }
 .terminal-icon { display: none; }
 .terminal-activity { font-weight: 600; }
 .terminal-note { color: var(--muted); font-size: 12px; line-height: 1.6; }

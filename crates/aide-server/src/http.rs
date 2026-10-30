@@ -148,6 +148,20 @@ impl Manager {
                 self.runtime.attach(&project, &task, true)?;
                 Ok("Opened terminal".into())
             }
+            Command::SetParked {
+                project,
+                id,
+                parked,
+            } => {
+                let mut project = Project::open(Path::new(&project))?;
+                self.runtime.set_parked(&mut project, &id, parked).await?;
+                Ok(if parked {
+                    "Task parked"
+                } else {
+                    "Task unparked"
+                }
+                .into())
+            }
             Command::Recover {
                 project,
                 id,
@@ -158,6 +172,7 @@ impl Manager {
                 self.runtime
                     .repair(&mut project, &task, true, environment)
                     .await?;
+                project.set_parked(&id, false)?;
                 Ok("Session ready".into())
             }
             Command::Cleanup {
@@ -181,6 +196,7 @@ impl Manager {
                     .arg(&task.workspace)
                     .spawn()
                     .context("Open Zed")?;
+                project.set_parked(&id, false)?;
                 Ok("Opened Zed".into())
             }
             Command::Review { project, id } => {
@@ -206,6 +222,7 @@ impl Manager {
                     .current_dir(&task.workspace)
                     .spawn()
                     .context("Open review terminal")?;
+                project.set_parked(&id, false)?;
                 Ok("Opened review".into())
             }
         }

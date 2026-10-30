@@ -102,7 +102,7 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
                 <button class="primary" type="submit" disabled=move || !cx.connected.get() || selected_repository.get().is_empty()>"Start and open Codex"</button>
             </form></Show>
             <p class="error">{move || project.get().and_then(|p| p.error)}</p>
-            { [Status::Attention, Status::Waiting, Status::Working, Status::Starting, Status::Closing, Status::Completed].into_iter().map(move |status| {
+            { [Status::Attention, Status::Waiting, Status::Working, Status::Starting, Status::Closing, Status::Parked, Status::Completed].into_iter().map(move |status| {
                 let group = status.clone();
                 let list = Memo::new(move |_| project.get().map(|p| p.tasks.into_iter().filter(|t| t.status == group && (completed.get() || t.task.lifecycle != Lifecycle::Completed)).map(|t| t.task.id).collect::<Vec<_>>()).unwrap_or_default());
                 view! { <Show when=move || !list.get().is_empty()><h3>{label(&status)}</h3><For each=move || list.get() key=|id| id.clone() children={move |id| view!{<Task root=root.get_value() id=id/>}}/></Show> }
@@ -156,6 +156,15 @@ fn Task(root: String, id: String) -> impl IntoView {
             project: root.get_value(),
             id: id.get_value(),
         });
+    };
+    let toggle_parking = move |_| {
+        if let Some(task) = task.get() {
+            cx.send(Command::SetParked {
+                project: root.get_value(),
+                id: id.get_value(),
+                parked: task.status != Status::Parked,
+            });
+        }
     };
     let cleanup = move |_| {
         if let Some(task) = task.get() {
@@ -237,7 +246,11 @@ fn Task(root: String, id: String) -> impl IntoView {
                         Some(TerminalActivity::Working) => "Terminal working — commands are running in one or more panes outside Codex.",
                         None => "Terminal activity unavailable — the session is absent or process inspection did not succeed.",
                     }}</p></Show>
-                    <Show when=is_open><div class="actions"><button on:click=editor>"Open Zed"</button><button on:click=review>"Review"</button><button on:click=recover>"Recover session"</button><button class="danger" on:click=cleanup>"Close task"</button></div></Show>
+                    <Show when=is_open><div class="actions"><button on:click=editor>"Open Zed"</button><button on:click=review>"Review"</button><button on:click=recover>"Recover session"</button>
+                        <Show when=move || task.get().is_some_and(|t| matches!(t.status, Status::Waiting | Status::Parked))>
+                            <button on:click=toggle_parking disabled=move || !cx.connected.get() title="Set aside while waiting externally. Opening Terminal, Zed or Review, or new Codex activity, unparks it.">{move || if task.get().is_some_and(|t| t.status == Status::Parked) { "Unpark task" } else { "Park task" }}</button>
+                        </Show>
+                        <button class="danger" on:click=cleanup>"Close task"</button></div></Show>
                 </div>
             </Show>
         </article>
@@ -259,6 +272,7 @@ fn status_name(status: &Status) -> &'static str {
         Status::Attention => "attention",
         Status::Working => "working",
         Status::Waiting => "waiting",
+        Status::Parked => "parked",
         Status::Completed => "completed",
     }
 }
@@ -270,6 +284,7 @@ fn label(status: &Status) -> &'static str {
         Status::Attention => "Requires attention",
         Status::Working => "Working",
         Status::Waiting => "Ready",
+        Status::Parked => "Parked",
         Status::Completed => "Completed",
     }
 }

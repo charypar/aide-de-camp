@@ -226,6 +226,7 @@ impl Runtime {
         // This process is replaced by the native UI. Record its birth time as
         // well as PID so an old marker cannot hide unrelated work after PID reuse.
         crate::activity::CodexProcess::remember()?;
+        project.set_parked(&task.id, false)?;
         let error = command
             .args([
                 "--remote",
