@@ -14,6 +14,7 @@ pub struct Github {
     network: Arc<tokio::sync::Mutex<Poller>>,
     verified: Arc<Mutex<BTreeSet<PrId>>>,
     identities: Arc<Mutex<BTreeMap<String, String>>>,
+    diagnostics: Arc<Mutex<Diagnostics>>,
 }
 #[derive(Default)]
 struct Poller {
@@ -28,30 +29,127 @@ struct Link {
     view: PrView,
 }
 
+type LinkKey = (String, String, PrId);
+
+#[derive(Default)]
+struct Diagnostics {
+    registry: Option<String>,
+    scans: BTreeMap<String, String>,
+    writes: BTreeMap<LinkKey, String>,
+}
+impl Link {
+    fn key(&self) -> LinkKey {
+        (self.root.clone(), self.task.clone(), self.view.id.clone())
+    }
+}
+
 impl Github {
-    fn links(home: &Home) -> Result<Vec<Link>> {
+    fn root_key(root: &str) -> String {
+        Path::new(root)
+            .canonicalize()
+            .unwrap_or_else(|_| root.into())
+            .display()
+            .to_string()
+    }
+    fn links(&self, home: &Home) -> Result<Vec<Link>> {
+        let roots = match home.roots() {
+            Ok(roots) => {
+                self.diagnostics.lock().unwrap().registry = None;
+                roots
+                    .into_iter()
+                    .map(|root| Self::root_key(&root))
+                    .collect::<Vec<_>>()
+            }
+            Err(error) => {
+                self.diagnostics.lock().unwrap().registry =
+                    Some(format!("Cannot read project registry: {error}"));
+                return Err(error);
+            }
+        };
         let mut links = Vec::new();
-        for root in home.roots()? {
-            let Ok(project) = Project::open(Path::new(&root)) else {
-                continue;
+        let mut errors = BTreeMap::new();
+        let mut scanned = BTreeSet::new();
+        for root in &roots {
+            let result = Project::open(Path::new(root)).and_then(|project| {
+                let records = project.all_pull_requests()?;
+                Ok((project, records))
+            });
+            let (project, records) = match result {
+                Ok(result) => result,
+                Err(error) => {
+                    errors.insert(root.clone(), format!("Cannot read PR links: {error}"));
+                    continue;
+                }
             };
-            for (task, view) in project.all_pull_requests()? {
-                if project.task(&task)?.lifecycle == Lifecycle::Open {
-                    links.push(Link {
-                        root: root.clone(),
-                        task,
-                        view,
-                    });
+            scanned.insert(root.clone());
+            let mut problems = Vec::new();
+            for (task, record) in records {
+                match record.and_then(|view| project.task(&task).map(|t| (t, view))) {
+                    Ok((record, view)) if record.lifecycle == Lifecycle::Open => {
+                        links.push(Link {
+                            root: root.clone(),
+                            task,
+                            view,
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(error) => problems.push(format!("Task {task}: {error}")),
                 }
             }
+            if !problems.is_empty() {
+                errors.insert(root.clone(), problems.join("; "));
+            }
         }
+        let keys: BTreeSet<_> = links.iter().map(Link::key).collect();
+        let mut diagnostics = self.diagnostics.lock().unwrap();
+        diagnostics.scans = errors;
+        diagnostics.writes.retain(|key, _| {
+            roots.contains(&key.0) && (!scanned.contains(&key.0) || keys.contains(key))
+        });
         Ok(links)
+    }
+    pub fn project_error(&self, root: &str) -> Option<String> {
+        let root = Self::root_key(root);
+        let diagnostics = self.diagnostics.lock().unwrap();
+        let mut messages = Vec::new();
+        messages.extend(diagnostics.registry.iter().cloned());
+        messages.extend(diagnostics.scans.get(&root).cloned());
+        for ((project, task, id), error) in &diagnostics.writes {
+            if project == &root {
+                messages.push(format!("Task {task}, {}: {error}", id.label()));
+            }
+        }
+        (!messages.is_empty()).then(|| format!("GitHub monitoring: {}", messages.join("; ")))
+    }
+    fn store_view(&self, link: &Link, view: &PrView) -> Result<()> {
+        let result = Project::open(Path::new(&link.root))
+            .and_then(|project| project.observe_pr(&link.task, view));
+        let mut diagnostics = self.diagnostics.lock().unwrap();
+        match &result {
+            Ok(()) => {
+                diagnostics.writes.remove(&link.key());
+            }
+            Err(error) => {
+                diagnostics
+                    .writes
+                    .insert(link.key(), format!("Could not save PR status: {error}"));
+            }
+        }
+        result
     }
     pub fn decorate(&self, project: &Project, view: &mut TaskView) {
         match project.pull_requests(&view.task.id) {
             Ok(mut links) => {
                 let verified = self.verified.lock().unwrap();
                 for link in &mut links {
+                    let key = (
+                        project.root.display().to_string(),
+                        view.task.id.clone(),
+                        link.id.clone(),
+                    );
+                    if let Some(error) = self.diagnostics.lock().unwrap().writes.get(&key) {
+                        link.error = Some(error.clone());
+                    }
                     if let Some(viewer) = self.identities.lock().unwrap().get(&link.id.host)
                         && link
                             .observation
@@ -80,16 +178,23 @@ impl Github {
     pub async fn run(&self, home: Home) {
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut last_error = None;
         loop {
             tick.tick().await;
-            let _ = self.poll(&home).await;
+            let error = self.poll(&home).await.err().map(|error| error.to_string());
+            if error != last_error
+                && let Some(message) = &error
+            {
+                eprintln!("GitHub polling: {message}");
+            }
+            last_error = error;
         }
     }
     async fn poll(&self, home: &Home) -> Result<()> {
         let Ok(mut poller) = self.network.try_lock() else {
             return Ok(());
         };
-        let links = Self::links(home)?;
+        let links = self.links(home)?;
         let ids: BTreeSet<_> = links.iter().map(|l| l.view.id.clone()).collect();
         poller.due.retain(|id, _| ids.contains(id));
         self.verified.lock().unwrap().retain(|id| ids.contains(id));
@@ -133,7 +238,7 @@ impl Github {
         let time = now();
         let mut error = None;
         // Read associations again after network I/O. An unlink must never be resurrected.
-        let links = Self::links(home)?;
+        let links = self.links(home)?;
         for (host, viewer) in poller.client.identities.clone() {
             let changed = poller
                 .identities
@@ -153,7 +258,9 @@ impl Github {
                 view.observation = None;
                 view.error =
                     Some("GitHub account changed; refreshing for the active account".into());
-                Project::open(Path::new(&link.root))?.observe_pr(&link.task, &view)?;
+                if let Err(e) = self.store_view(link, &view) {
+                    error = Some(format!("Could not save PR status: {e}"));
+                }
                 self.verified.lock().unwrap().remove(&view.id);
                 poller.due.remove(&view.id);
             }
@@ -162,15 +269,18 @@ impl Github {
             let interval = result.as_ref().map(|o| o.interval()).unwrap_or(300);
             poller.due.insert(id.clone(), time + interval);
             for link in links.iter().filter(|l| l.view.id == id) {
-                let project = Project::open(Path::new(&link.root))?;
-                // Reload to respect account invalidation above.
-                let Some(mut view) = project
-                    .pull_requests(&link.task)?
-                    .into_iter()
-                    .find(|v| v.id == id)
-                else {
-                    continue;
-                };
+                // UPDATE only touches an existing, open-task association; it cannot
+                // resurrect an unlink. Avoid re-reading unrelated records here.
+                let mut view = link.view.clone();
+                if view.observation.as_ref().is_some_and(|o| {
+                    poller
+                        .client
+                        .identities
+                        .get(&id.host)
+                        .is_some_and(|viewer| viewer != &o.viewer_id)
+                }) {
+                    view.observation = None;
+                }
                 view.last_attempt = time;
                 match &result {
                     Ok(observation) => {
@@ -182,7 +292,10 @@ impl Github {
                         error = Some(e.to_string());
                     }
                 }
-                project.observe_pr(&link.task, &view)?;
+                if let Err(e) = self.store_view(link, &view) {
+                    error = Some(format!("Could not save PR status: {e}"));
+                    poller.due.insert(id.clone(), time + 60);
+                }
             }
             if let Err(e) = &result {
                 error = Some(e.to_string());
@@ -223,14 +336,22 @@ impl Github {
         };
         Project::open(Path::new(root))?.link_pr(task, &view)?;
         self.verified.lock().unwrap().insert(id.clone());
-        // Share the successful result across duplicate associations on the next poll;
-        // also invalidate account-dependent caches for this host immediately.
-        for link in Self::links(home)?
+        poller.due.insert(
+            id.clone(),
+            now() + view.observation.as_ref().unwrap().interval(),
+        );
+        // The requested link is already durable. Failures updating other tasks
+        // are reported on their projects and retried without claiming linking failed.
+        for link in self
+            .links(home)
+            .unwrap_or_default()
             .iter()
             .filter(|l| l.view.id.host == id.host)
         {
             if link.view.id == id {
-                Project::open(Path::new(&link.root))?.observe_pr(&link.task, &view)?;
+                if self.store_view(link, &view).is_err() {
+                    poller.due.insert(id.clone(), now() + 60);
+                }
             } else if link
                 .view
                 .observation
@@ -241,13 +362,10 @@ impl Github {
                 old.observation = None;
                 old.error =
                     Some("GitHub account changed; refreshing for the active account".into());
-                Project::open(Path::new(&link.root))?.observe_pr(&link.task, &old)?;
+                let _ = self.store_view(link, &old); // Diagnostics survive until a successful write.
                 poller.due.remove(&old.id);
             }
         }
-        poller
-            .due
-            .insert(id, now() + view.observation.as_ref().unwrap().interval());
         Ok("PR linked".into())
     }
     pub fn unlink(&self, root: &str, task: &str, url: &str) -> Result<String> {
@@ -382,7 +500,7 @@ mod tests {
             5
         );
         project.unlink_pr("one", &id)?;
-        assert_eq!(Github::links(&home)?.len(), 1);
+        assert_eq!(restarted.links(&home)?.len(), 1);
         project.unlink_pr("two", &id)?;
         restarted.poll(&home).await?;
         assert!(restarted.network.lock().await.due.is_empty());
@@ -478,6 +596,144 @@ mod tests {
         let (result, ()) = tokio::join!(github.poll(&home), unlink);
         result?;
         assert!(project.pull_requests("one")?.is_empty());
+        Ok(())
+    }
+    #[tokio::test]
+    async fn bad_records_and_projects_do_not_stop_other_links_and_recover() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let home = Home::new(Some(dir.path().join("home")))?;
+        let root = dir.path().join("project");
+        std::fs::create_dir(&root)?;
+        let project = Project::init(&root)?;
+        home.register(&root)?;
+        for id in ["one", "two", "bad-task"] {
+            project.save(&task(id))?;
+        }
+        for (id, number) in [("one", 1), ("one", 2), ("two", 3), ("bad-task", 4)] {
+            project.link_pr(id, &link(number, PrStatus::Waiting))?;
+        }
+        let db = rusqlite::Connection::open(root.join(".aide/state.sqlite"))?;
+        db.execute(
+            "UPDATE github_links SET body='broken' WHERE url=?",
+            [link(1, PrStatus::Waiting).id.url()],
+        )?;
+        db.execute("UPDATE tasks SET body='broken' WHERE id='bad-task'", [])?;
+        db.execute(
+            "INSERT INTO github_links VALUES('two','invalid-url','{}')",
+            [],
+        )?;
+        let unavailable = dir.path().join("unavailable");
+        std::fs::create_dir(&unavailable)?;
+        Project::init(&unavailable)?;
+        home.register(&unavailable)?;
+        let unavailable_db = rusqlite::Connection::open(unavailable.join(".aide/state.sqlite"))?;
+        let application: i64 =
+            unavailable_db.query_row("PRAGMA application_id", [], |r| r.get(0))?;
+        unavailable_db.pragma_update(None, "application_id", 0)?;
+        let broken = &project.pull_requests("one")?[0];
+        assert!(broken.observation.is_none());
+        assert!(broken.error.as_ref().unwrap().contains("could not be read"));
+        let fixture = dir.path().join("github.json");
+        write(&fixture, json!({}));
+        let github = Github::default();
+        github.network.lock().await.client.fixture = Some(fixture.clone());
+        github.poll(&home).await?;
+        // Both the damaged cache and another PR on the same task update normally.
+        for pr in project.pull_requests("one")? {
+            assert_eq!(pr.observation.unwrap().status, PrStatus::Ready);
+            assert!(pr.error.is_none());
+        }
+        let records = project.all_pull_requests()?;
+        let third = records
+            .iter()
+            .filter_map(|(_, r)| r.as_ref().ok())
+            .find(|v| v.id.number == 3)
+            .unwrap();
+        assert_eq!(third.observation.as_ref().unwrap().status, PrStatus::Ready);
+        let error = github.project_error(root.to_str().unwrap()).unwrap();
+        assert!(error.contains("bad-task"));
+        assert!(error.contains("Invalid stored PR URL"));
+        assert!(
+            github
+                .project_error(unavailable.to_str().unwrap())
+                .unwrap()
+                .contains("Cannot read PR links")
+        );
+        project.save(&task("bad-task"))?;
+        db.execute("DELETE FROM github_links WHERE url='invalid-url'", [])?;
+        unavailable_db.pragma_update(None, "application_id", application)?;
+        github.poll(&home).await?;
+        assert!(github.project_error(root.to_str().unwrap()).is_none());
+        assert!(
+            github
+                .project_error(unavailable.to_str().unwrap())
+                .is_none()
+        );
+        assert_eq!(
+            project.pull_requests("bad-task")?[0]
+                .observation
+                .as_ref()
+                .unwrap()
+                .status,
+            PrStatus::Ready
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_writes_are_isolated_visible_stale_and_retryable() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let home = Home::new(Some(dir.path().join("home")))?;
+        let root = dir.path().join("project");
+        std::fs::create_dir(&root)?;
+        let project = Project::init(&root)?;
+        home.register(&root)?;
+        for id in ["bad", "good"] {
+            project.save(&task(id))?;
+            project.link_pr(id, &link(1, PrStatus::Waiting))?;
+        }
+        project.link_pr("good", &link(2, PrStatus::Waiting))?;
+        let db = rusqlite::Connection::open(root.join(".aide/state.sqlite"))?;
+        db.execute_batch("CREATE TRIGGER fail_status BEFORE UPDATE ON github_links WHEN OLD.task_id='bad' BEGIN SELECT RAISE(FAIL,'fixture write failure'); END;")?;
+        let fixture = dir.path().join("github.json");
+        write(&fixture, json!({}));
+        let github = Github::default();
+        github.network.lock().await.client.fixture = Some(fixture);
+        assert!(github.poll(&home).await.is_err());
+        for pr in project.pull_requests("good")? {
+            assert_eq!(pr.observation.unwrap().status, PrStatus::Ready);
+        }
+        assert!(
+            github
+                .project_error(root.to_str().unwrap())
+                .unwrap()
+                .contains("fixture write failure")
+        );
+        let runtime = crate::runtime::Runtime::new(&home);
+        let mut view = runtime.view(project.task("bad")?).await;
+        github.decorate(&project, &mut view);
+        assert!(view.pull_requests[0].stale);
+        assert_eq!(view.pull_requests[0].color(), "grey");
+        assert!(
+            view.pull_requests[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Could not save PR status")
+        );
+        db.execute_batch("DROP TRIGGER fail_status")?;
+        github
+            .refresh(&home, root.to_str().unwrap(), "good")
+            .await?;
+        assert!(github.project_error(root.to_str().unwrap()).is_none());
+        assert_eq!(
+            project.pull_requests("bad")?[0]
+                .observation
+                .as_ref()
+                .unwrap()
+                .status,
+            PrStatus::Ready
+        );
         Ok(())
     }
 }

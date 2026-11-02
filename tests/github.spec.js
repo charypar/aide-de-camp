@@ -73,3 +73,31 @@ test('inline errors retain input; failed refresh is stale and restart recovers',
   await expect(row.locator('.task-heading .pr-tag')).toHaveAttribute('data-color','yellow');await expect(row.locator('.pr-reasons')).toContainText('CI failed');
  }finally{await stop(server);cleanup(f);}
 });
+
+test('test-merge checks control readiness and head checks are the fallback',async({page})=>{
+ const f=githubFixture({prs:{1:{status:'failed',merge_check:'SUCCESS'}}});const server=await manager(f);
+ try{
+  await page.goto(server.url);const row=taskRow(page,'one');await row.locator('.task-title').click();await add(row,1);
+  const badge=row.locator('.task-heading .pr-tag');await expect(badge).toContainText('Ready to merge');await expect(badge).toHaveAttribute('data-color','green');
+  await row.locator('.pr-checks summary').click();await expect(row.locator('.pr-checks')).toContainText('merge-build: SUCCESS');await expect(row.locator('.pr-checks')).not.toContainText('FAILURE');
+  f.state({prs:{1:{status:'ready',merge_check:'FAILURE'}}});await refresh(row);await expect(badge).toContainText('Needs attention');await expect(badge).toHaveAttribute('data-color','yellow');await expect(row.locator('.pr-reasons')).toContainText('CI failed');
+  f.state({prs:{1:{status:'running',merge_check:'NONE',merge_state:'BLOCKED'}}});await refresh(row);await expect(badge).toContainText('CI running');await expect(page).toHaveTitle('(0·1) Aide de camp');
+ }finally{await stop(server);cleanup(f);}
+});
+
+test('damaged records and failed saves leave other PRs fresh and report recovery',async({page})=>{
+ const f=githubFixture({prs:{1:{status:'waiting'},2:{status:'waiting'}}});f.run(binary,['task','start','two','--workspace-only']);let server=await manager(f);
+ const sql=query=>f.run('python3',['-c','import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.executescript(sys.argv[2]); db.close()',join(f.root,'.aide','state.sqlite'),query]);
+ try{
+  f.run(binary,['task','pr','one','link',url(1)]);f.run(binary,['task','pr','two','link',url(2)]);await stop(server);
+  sql("UPDATE github_links SET body='broken' WHERE task_id='two'; INSERT INTO github_links VALUES('missing','invalid-url','{}'); CREATE TRIGGER fail_status BEFORE UPDATE ON github_links WHEN OLD.task_id='one' BEGIN SELECT RAISE(FAIL,'fixture write failure'); END;");
+  f.state({});server=await manager(f);await page.goto(server.url);
+  const one=taskRow(page,'one'),two=taskRow(page,'two'),errors=page.locator('.project > p.error');
+  await expect(two.locator('.task-heading .pr-tag')).toContainText('Ready to merge');await expect(two.locator('.task-heading .pr-tag')).toHaveAttribute('data-color','green');
+  await expect(one.locator('.task-heading .pr-tag')).toContainText('Stale');await expect(one.locator('.task-heading .pr-tag')).toHaveAttribute('data-color','grey');
+  await expect(errors).toContainText('Invalid stored PR URL');await expect(errors).toContainText('Could not save PR status');
+  await one.locator('.task-title').click();await expect(one.locator('.pr-entry .error')).toContainText('fixture write failure');
+  sql("DROP TRIGGER fail_status; DELETE FROM github_links WHERE url='invalid-url';");await refresh(one);
+  await expect(one.locator('.task-heading .pr-tag')).toHaveAttribute('data-color','green');await expect(errors).toBeEmpty();await expect(one.locator('.pr-entry .error')).toBeEmpty();
+ }finally{await stop(server);cleanup(f);}
+});

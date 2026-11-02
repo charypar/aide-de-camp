@@ -49,6 +49,14 @@ for alias, number in re.findall(r'(p\d+):repository\(.*?pullRequest\(number:(\d+
                    'reviewDecision':'REVIEW_REQUIRED' if mode == 'waiting' else 'CHANGES_REQUESTED' if mode=='feedback' else 'APPROVED',
                    'mergeQueueEntry':{'state':'QUEUED'} if mode=='queued' else None,'headRefName':'feature','headRefOid':'abcdef','baseRefName':'main',
                    'commits':{'nodes':[{'commit':{'id':'commit','oid':'abcdef','statusCheckRollup':rollup}}]},'potentialMergeCommit':None})
+        if 'merge_check' in options:
+            result = options['merge_check']
+            merge_nodes = [] if result == 'EMPTY' else [{'__typename':'CheckRun','name':'merge-build','status':'IN_PROGRESS' if result == 'IN_PROGRESS' else 'COMPLETED','conclusion':None if result == 'IN_PROGRESS' else result,'detailsUrl':None,'isRequired':True}]
+            merge_rollup = None if result == 'NONE' else {'contexts':{'nodes':merge_nodes,'pageInfo':{'hasNextPage':options.get('merge_paginated',False),'endCursor':'next'}}}
+            if result == 'MALFORMED':
+                merge_rollup = {'contexts':{}}
+            pr['potentialMergeCommit'] = {'id':'merge','oid':'merge-sha','statusCheckRollup':merge_rollup}
+            pr['mergeStateStatus'] = options.get('merge_state', 'BLOCKED' if result in ['FAILURE','IN_PROGRESS'] else 'CLEAN')
         if options.get('partial'):
             errors.append({'path':[alias,'pullRequest','commits'],'message':'Access denied'})
     data[alias] = {'pullRequest':pr}

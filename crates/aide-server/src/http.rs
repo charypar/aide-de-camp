@@ -88,6 +88,12 @@ impl Manager {
                 },
                 Err(error) => view.error = Some(error.to_string()),
             }
+            if let Some(error) = self.github.project_error(&root) {
+                view.error = Some(match view.error {
+                    Some(existing) => format!("{existing} · {error}"),
+                    None => error,
+                });
+            }
             projects.push(view);
         }
         projects

@@ -297,61 +297,83 @@ impl Client {
         if head["oid"].as_str() != o.head_sha.as_deref() {
             bail!("PR head changed or commit data is incomplete; retrying");
         }
-        // GitHub may evaluate a test merge as well as the head. Include both;
-        // mergeStateStatus remains the authority on policy satisfaction.
-        for commit in [head, &pr["potentialMergeCommit"]] {
-            if commit.is_null() {
-                continue;
+        // GitHub evaluates the test merge when it has checks/statuses, otherwise
+        // the head. Combining both can invent blockers from the unused commit.
+        let commit = check_commit(pr, head)?;
+        let rollup = &commit["statusCheckRollup"];
+        if rollup.is_null() {
+            return classify_implementation(pr, o);
+        }
+        let mut contexts = rollup["contexts"].clone();
+        let mut pages = 0;
+        loop {
+            let nodes = contexts["nodes"]
+                .as_array()
+                .context("Incomplete check results")?;
+            for check in nodes {
+                let parsed = parse_check(check)?;
+                if matches!(
+                    parsed.result.as_str(),
+                    "QUEUED" | "IN_PROGRESS" | "WAITING" | "PENDING" | "REQUESTED"
+                ) {
+                    o.ci_running = true;
+                }
+                o.checks.push(parsed);
             }
-            let rollup = &commit["statusCheckRollup"];
-            if rollup.is_null() {
-                continue;
+            if !contexts["pageInfo"]["hasNextPage"]
+                .as_bool()
+                .context("Missing check pagination")?
+            {
+                break;
             }
-            let mut contexts = rollup["contexts"].clone();
-            let mut pages = 0;
-            loop {
-                let nodes = contexts["nodes"]
-                    .as_array()
-                    .context("Incomplete check results")?;
-                for check in nodes {
-                    let parsed = parse_check(check)?;
-                    if matches!(
-                        parsed.result.as_str(),
-                        "QUEUED" | "IN_PROGRESS" | "WAITING" | "PENDING" | "REQUESTED"
-                    ) {
-                        o.ci_running = true;
-                    }
-                    o.checks.push(parsed);
-                }
-                if !contexts["pageInfo"]["hasNextPage"]
-                    .as_bool()
-                    .context("Missing check pagination")?
-                {
-                    break;
-                }
-                pages += 1;
-                if pages > 20 {
-                    bail!("Too many check pages; status is incomplete");
-                }
-                let cursor = required(&contexts["pageInfo"], "endCursor")?;
-                let query = format!(
-                    "query {{ viewer {{ id login }} node(id:{}) {{ ... on Commit {{ statusCheckRollup {{ contexts(first:100,after:{}) {{ {} }} }} }} }} }}",
-                    json!(required(commit, "id")?),
-                    json!(cursor),
-                    check_fields(id.number)
-                );
-                let page = self.query(host, query).await?;
-                if identity(&page)? != *viewer {
-                    self.identities.insert(host.into(), identity(&page)?.0);
-                    bail!("GitHub account changed during check pagination");
-                }
-                contexts = page["node"]["statusCheckRollup"]["contexts"].clone();
+            pages += 1;
+            if pages > 20 {
+                bail!("Too many check pages; status is incomplete");
             }
+            let cursor = required(&contexts["pageInfo"], "endCursor")?;
+            let query = format!(
+                "query {{ viewer {{ id login }} node(id:{}) {{ ... on Commit {{ statusCheckRollup {{ contexts(first:100,after:{}) {{ {} }} }} }} }} }}",
+                json!(required(commit, "id")?),
+                json!(cursor),
+                check_fields(id.number)
+            );
+            let page = self.query(host, query).await?;
+            if identity(&page)? != *viewer {
+                self.identities.insert(host.into(), identity(&page)?.0);
+                bail!("GitHub account changed during check pagination");
+            }
+            contexts = page["node"]["statusCheckRollup"]["contexts"].clone();
         }
         classify_implementation(pr, o)?;
         Ok(())
     }
 }
+fn check_commit<'a>(pr: &'a Value, head: &'a Value) -> Result<&'a Value> {
+    let merge = pr
+        .get("potentialMergeCommit")
+        .context("Missing test merge commit")?;
+    if merge.is_null() {
+        return Ok(head);
+    }
+    let rollup = merge
+        .get("statusCheckRollup")
+        .context("Missing test merge checks")?;
+    if rollup.is_null() {
+        return Ok(head);
+    }
+    let contexts = &rollup["contexts"];
+    let nodes = contexts["nodes"]
+        .as_array()
+        .context("Incomplete test merge checks")?;
+    if nodes.is_empty() {
+        if contexts["pageInfo"]["hasNextPage"].as_bool() != Some(false) {
+            bail!("Incomplete test merge check pagination");
+        }
+        return Ok(head);
+    }
+    Ok(merge)
+}
+
 fn complete_alias(data: &Value, index: usize) -> Result<()> {
     if data["_errors"].as_array().is_some_and(|errors| {
         errors.iter().any(|e| {

@@ -148,23 +148,54 @@ impl Project {
             from.display()
         )
     }
+    fn decode_pr(url: &str, body: &str) -> Result<aide_core::PrView> {
+        // The association key is independent of its cached observation. A corrupt
+        // cache can be shown as unavailable and replaced by the next successful poll.
+        let id = crate::github::parse_url(url).context("Invalid stored PR URL")?;
+        if id.url() != url {
+            bail!("Stored PR URL is not canonical");
+        }
+        if let Ok(view) = serde_json::from_str::<aide_core::PrView>(body)
+            && view.id == id
+        {
+            return Ok(view);
+        }
+        Ok(aide_core::PrView {
+            id,
+            observation: None,
+            last_attempt: 0,
+            error: Some("Stored PR status could not be read; refresh to recover it".into()),
+            stale: true,
+            historical: false,
+        })
+    }
     pub fn pull_requests(&self, id: &str) -> Result<Vec<aide_core::PrView>> {
         let mut statement = self
             .db
-            .prepare("SELECT body FROM github_links WHERE task_id=? ORDER BY rowid")?;
-        let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
-        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
-    }
-    pub fn all_pull_requests(&self) -> Result<Vec<(String, aide_core::PrView)>> {
-        let mut statement = self
-            .db
-            .prepare("SELECT task_id,body FROM github_links ORDER BY rowid")?;
-        let rows = statement.query_map([], |row| {
+            .prepare("SELECT url,body FROM github_links WHERE task_id=? ORDER BY rowid")?;
+        let rows = statement.query_map([id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         rows.map(|row| {
-            let (id, body) = row?;
-            Ok((id, serde_json::from_str(&body)?))
+            let (url, body) = row?;
+            Self::decode_pr(&url, &body)
+        })
+        .collect()
+    }
+    pub fn all_pull_requests(&self) -> Result<Vec<(String, Result<aide_core::PrView>)>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT task_id,url,body FROM github_links ORDER BY rowid")?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (task, url, body) = row?;
+            Ok((task, Self::decode_pr(&url, &body)))
         })
         .collect()
     }

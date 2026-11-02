@@ -28,7 +28,7 @@ use std::{fs, path::Path};
 pub(super) fn task(id: &str) -> Task {
     Task {
         id: id.into(),
-        key: id.into(),
+        key: format!("{id:0>32}"),
         repository: "repo".into(),
         workspace: "/fixture".into(),
         lifecycle: Lifecycle::Open,
@@ -313,4 +313,66 @@ async fn only_direct_current_requests_create_review_work_even_across_pages() {
         .await
         .unwrap();
     assert_eq!(results[0].1.as_ref().unwrap().status, PrStatus::Waiting);
+}
+
+#[tokio::test]
+async fn test_merge_checks_take_precedence_over_head_checks() {
+    let (_dir, mut client) = fixture(json!({"prs":{
+        "1":{"status":"failed","merge_check":"SUCCESS"},
+        "2":{"status":"ready","merge_check":"FAILURE"},
+        "3":{"status":"failed","merge_check":"EMPTY","merge_state":"BLOCKED"},
+        "4":{"status":"failed","merge_check":"NONE","merge_state":"BLOCKED"},
+        "5":{"status":"running","merge_check":"SUCCESS"},
+        "6":{"status":"failed","merge_check":"IN_PROGRESS"},
+        "7":{"status":"ready","merge_check":"SUCCESS","merge_paginated":true},
+        "8":{"status":"ready","merge_check":"MALFORMED"},
+        "9":{"status":"failed","paginated":true,"merge_check":"SUCCESS"}
+    }}));
+    let ids: Vec<_> = (1..=9).map(|n| link(n, PrStatus::Unknown).id).collect();
+    let results = client.fetch(&ids).await.unwrap();
+    for (number, status, source, running) in [
+        (1, PrStatus::Ready, "merge-build", false),
+        (2, PrStatus::NeedsAttention, "merge-build", false),
+        (3, PrStatus::NeedsAttention, "build", false),
+        (4, PrStatus::NeedsAttention, "build", false),
+        (5, PrStatus::Ready, "merge-build", false),
+        (6, PrStatus::Running, "merge-build", true),
+        (7, PrStatus::NeedsAttention, "merge-build", false),
+        (9, PrStatus::Ready, "merge-build", false),
+    ] {
+        let observation = results
+            .iter()
+            .find(|(id, _)| id.number == number)
+            .unwrap()
+            .1
+            .as_ref()
+            .unwrap();
+        assert_eq!(observation.status, status, "PR {number}");
+        assert_eq!(observation.checks[0].name, source, "PR {number}");
+        assert_eq!(observation.ci_running, running, "PR {number}");
+        assert_eq!(observation.interval(), if running { 60 } else { 300 });
+        assert_eq!(observation.checks.len(), if number == 7 { 2 } else { 1 });
+    }
+    assert!(
+        results
+            .iter()
+            .find(|(id, _)| id.number == 8)
+            .unwrap()
+            .1
+            .is_err()
+    );
+    let log =
+        fs::read_to_string(client.fixture.as_ref().unwrap().with_extension("json.log")).unwrap();
+    let pagination: Vec<Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .filter(|v: &Value| v["query"].as_str().unwrap().contains("node(id:"))
+        .collect();
+    assert_eq!(pagination.len(), 1);
+    assert!(
+        pagination[0]["query"]
+            .as_str()
+            .unwrap()
+            .contains("node(id:\"merge\")")
+    );
 }

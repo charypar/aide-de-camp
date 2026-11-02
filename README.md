@@ -86,13 +86,13 @@ Expand a task and choose **GitHub PRs → Link PR**, paste a full PR URL, and ch
 
 Each linked PR has a clickable status tag. Aide compares its author with the active `gh` account for the URL's host:
 
-- **Your PR:** grey while waiting for review, amber while CI runs, yellow for known merge blockers, and green when ready to merge. Details separate review status from CI checks. Green also requires your attention because merging is the next action. Optional failed checks do not override GitHub's merge policy.
+- **Your PR:** grey while waiting for review, amber while CI runs, yellow for known merge blockers, and green when ready to merge. Details separate review status from CI checks. Green also requires your attention because merging is the next action. Optional failed checks do not override GitHub's merge policy. CI uses test-merge checks when present and otherwise the PR head's checks.
 - **Someone else's PR:** an outstanding direct review request is yellow, labelled “again” after a previous submitted review. CI and merge readiness are not monitored. Team-only requests do not imply a personal assignment.
 - **Merged/closed:** informational, with no automatic task closure or collective completion cue.
 
 Any actionable PR puts the task in **Requires attention**, counted once. The native task/Codex badge and terminal activity remain independent. Failed refreshes keep known action reasons but mark their badges stale and grey; connection errors are shown separately from CI failures.
 
-The manager polls running CI every minute and everything else every five minutes, including merged/closed PRs on open tasks. Every manager startup refreshes all open-task links. **Refresh PRs** requests an immediate update, subject to rate-limit backoff. Browsers share the same poller; it keeps running with the browser closed. Completed tasks retain their last observation without polling.
+The manager polls running CI every minute and everything else every five minutes, including merged/closed PRs on open tasks. Every manager startup refreshes all open-task links. **Refresh PRs** requests an immediate update, subject to rate-limit backoff. Browsers share the same poller; it keeps running with the browser closed. Completed tasks retain their last observation without polling. Local storage failures are reported on the affected project and do not stop other links from refreshing; damaged cached observations can recover from their stored PR URLs.
 
 From a registered project, with the dashboard running:
 
