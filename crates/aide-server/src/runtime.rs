@@ -227,6 +227,8 @@ impl Runtime {
             backend_alive: false,
             summary: None,
             terminal_activity: None,
+            pull_requests: vec![],
+            native_status: None,
             task,
         };
         match view.task.lifecycle {

@@ -38,7 +38,7 @@ install:
 
 # Run automated Rust tests.
 test:
-    cargo test --locked -p review-core -p review-server -p aide-server
+    cargo test --locked -p review-core -p review-server -p aide-core -p aide-server
 
 # Format all Rust code.
 fmt:
@@ -102,3 +102,15 @@ test-aide-live: build
 # Check status becomes idle after detaching a real terminal mid-turn (one model turn).
 test-aide-detached-status: build
     python3 tests/aide-live.py --detached-status
+
+# Check dashboard dependencies, including optional GitHub monitoring via gh.
+aide-doctor:
+    cargo run --locked -p aide-server -- doctor
+
+# Exercise GitHub persistence, status rules, polling and failure recovery with fixtures.
+test-aide-github:
+    cargo test --locked -p aide-core -p aide-server github
+
+# Read an existing PR using the active gh account; never modifies GitHub.
+test-aide-github-live url:
+    AIDE_TEST_PR_URL="$1" cargo test --locked -p aide-server live_github_read_only -- --ignored --nocapture

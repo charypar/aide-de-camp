@@ -1,6 +1,7 @@
 mod activity;
 mod cli;
 mod database;
+mod github;
 mod http;
 mod recording;
 mod rpc;

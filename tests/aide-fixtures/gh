@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Read-only gh GraphQL fixture. All observations are controlled by a JSON file."""
+import json, os, re, sys, time
+from pathlib import Path
+path = Path(os.environ['AIDE_GITHUB_FIXTURE'])
+state = json.loads(path.read_text())
+query = json.load(sys.stdin)['query']
+with open(str(path) + '.log', 'a') as log:
+    log.write(json.dumps({'query': query, 'args':sys.argv[1:]}) + '\n')
+if state.get('delay'):
+    time.sleep(state['delay'])
+if state.get('error'):
+    print('HTTP/2 ' + str(state['error']))
+    if state['error'] == 429:
+        print('retry-after: 60\nx-ratelimit-remaining: 0\nx-ratelimit-reset: '+str(int(time.time())+60))
+    print('\n'+json.dumps({'message': 'Bad credentials' if state['error'] == 401 else 'rate limit' if state['error'] == 429 else 'unavailable'}))
+    sys.exit(1)
+if state.get('malformed'):
+    print('not JSON')
+    sys.exit(0)
+viewer = state.get('viewer', {'id':'ME','login':'me'})
+data = {'viewer':viewer}
+errors = []
+for alias, number in re.findall(r'(p\d+):repository\(.*?pullRequest\(number:(\d+)\)', query):
+    options = state.get('prs',{}).get(number,{})
+    mode = options.get('status','ready')
+    other = options.get('other',int(number)>=100)
+    author = options.get('author',{'id':'OTHER','login':'colleague'} if other else {'id':'ME','login':'me'})
+    pr = {'title':options.get('title','Example PR '+number), 'state':mode.upper() if mode in ['merged','closed'] else 'OPEN', 'author':author,
+          'reviewRequests':{'pageInfo':{'hasNextPage':False,'endCursor':None},'nodes':[{'requestedReviewer':{'__typename':'User','id':viewer['id']}}] if mode in ['requested','rerequest'] else []},
+          'viewerLatestReview':{'submittedAt':'2026-10-01T12:00:00Z'} if mode == 'rerequest' else None}
+    if options.get('team_only'):
+        pr['reviewRequests']['nodes'] = [{'requestedReviewer':{'__typename':'Team','id':'team'}}]
+    if options.get('review_paginated'):
+        after = 'reviewRequests(first:100,after:' in query
+        pr['reviewRequests'] = {'nodes':[{'requestedReviewer':{'__typename':'User','id':viewer['id']}}] if after else [],'pageInfo':{'hasNextPage':not after,'endCursor':'next'}}
+    if mode == 'inaccessible':
+        data[alias] = {'pullRequest':None}
+        errors.append({'path':[alias,'pullRequest'],'message':'Could not resolve to a PullRequest'})
+        continue
+    if 'mergeStateStatus' in query:
+        if other and author['id'] != viewer['id']:
+            raise AssertionError('CI query made for review PR')
+        result = 'IN_PROGRESS' if mode == 'running' else 'FAILURE' if mode in ['failed','optional_failed'] else 'SUCCESS'
+        checks = [] if options.get('no_checks') else [{'__typename':'CheckRun','name':'build','status':'IN_PROGRESS' if mode == 'running' else 'COMPLETED','conclusion':None if mode == 'running' else result,'detailsUrl':'https://github.com/example/repo/actions/runs/1','isRequired':mode != 'optional_failed'}]
+        rollup = {'contexts':{'nodes':checks,'pageInfo':{'hasNextPage':options.get('paginated',False),'endCursor':'next'}}}
+        pr.update({'isDraft':mode == 'draft','mergeable':'CONFLICTING' if mode == 'conflict' else 'UNKNOWN' if mode=='unknown' else 'MERGEABLE',
+                   'mergeStateStatus':'UNSTABLE' if mode=='optional_failed' else 'DIRTY' if mode == 'conflict' else 'BEHIND' if mode=='behind' else 'UNKNOWN' if mode=='unknown' else 'BLOCKED' if mode in ['failed','waiting','feedback','blocked','running'] else 'CLEAN',
+                   'reviewDecision':'REVIEW_REQUIRED' if mode == 'waiting' else 'CHANGES_REQUESTED' if mode=='feedback' else 'APPROVED',
+                   'mergeQueueEntry':{'state':'QUEUED'} if mode=='queued' else None,'headRefName':'feature','headRefOid':'abcdef','baseRefName':'main',
+                   'commits':{'nodes':[{'commit':{'id':'commit','oid':'abcdef','statusCheckRollup':rollup}}]},'potentialMergeCommit':None})
+        if options.get('partial'):
+            errors.append({'path':[alias,'pullRequest','commits'],'message':'Access denied'})
+    data[alias] = {'pullRequest':pr}
+if 'node(id:' in query:
+    data['node'] = {'statusCheckRollup':{'contexts':{'nodes':[{'__typename':'StatusContext','context':'legacy','state':'FAILURE','targetUrl':None,'isRequired':True}],'pageInfo':{'hasNextPage':False,'endCursor':None}}}}
+print('HTTP/2 200\nx-ratelimit-remaining: 4999\n')
+body = {'data':data}
+if errors:
+    body['errors'] = errors
+print(json.dumps(body))

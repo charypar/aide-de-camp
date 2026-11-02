@@ -150,12 +150,12 @@ test('task creation, native status, focus, confirmation and retained history',as
   await expect(page).toHaveTitle('(1·0) Aide de camp');
   await page.getByRole('button',{name:'Cat Herder',exact:true}).click();await expect(row).toBeVisible();
   await expect(page).toHaveTitle('(1·0) Aide de camp');
-  // A status transition may remount the row in another group.
+  // Expanded task state survives moves between status groups.
   if(!await row.getByRole('button',{name:'Close task'}).isVisible())await row.getByRole('button',{name:/task-1234/}).click();
   page.once('dialog',async d=>{expect(d.message()).toContain('session');await d.dismiss();});await row.getByRole('button',{name:'Close task'}).click();expect(existsSync(workspace)).toBe(true);
   page.once('dialog',d=>d.accept());await row.getByRole('button',{name:'Close task'}).click();await expect(row).toHaveCount(0,{timeout:20000});expect(existsSync(workspace)).toBe(false);
   await expect(page).toHaveTitle('Aide de camp');
-  await page.getByLabel('Show completed').check();await expect(row).toBeVisible();await row.getByRole('button',{name:/task-1234/}).click();await expect(row).toContainText('recordings');
+  await page.getByLabel('Show completed').check();await expect(row).toBeVisible();await expect(row.locator('.task-title')).toHaveAttribute('aria-expanded','true');await expect(row).toContainText('recordings');
   expect(f.run(binary,['task','list','--completed'])).toContain('Completed');
   await expect(page).toHaveTitle('Aide de camp');
  }finally{await stop(server);cleanup(f);}

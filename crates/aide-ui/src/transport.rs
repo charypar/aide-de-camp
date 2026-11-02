@@ -1,6 +1,7 @@
+use crate::github::TaskUi;
 use aide_core::{Command, Event, ProjectView};
 use leptos::prelude::*;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::WebSocket;
 
@@ -28,6 +29,9 @@ pub struct Context {
     pub message: RwSignal<String>,
     pub notice_kind: RwSignal<NoticeKind>,
     notice_timeout: StoredValue<Option<gloo_timers::callback::Timeout>, LocalStorage>,
+    pub task_ui: RwSignal<BTreeMap<String, TaskUi>>,
+    owner: StoredValue<Owner>,
+    sequence: RwSignal<u64>,
     socket: StoredValue<Rc<RefCell<Option<WebSocket>>>, LocalStorage>,
 }
 impl Context {
@@ -38,6 +42,9 @@ impl Context {
             message: RwSignal::new(String::new()),
             notice_kind: RwSignal::new(NoticeKind::Progress),
             notice_timeout: StoredValue::new_local(None),
+            task_ui: RwSignal::new(BTreeMap::new()),
+            owner: StoredValue::new(Owner::current().expect("App owner")),
+            sequence: RwSignal::new(0),
             socket: StoredValue::new_local(Rc::new(RefCell::new(None))),
         }
     }
@@ -51,8 +58,26 @@ impl Context {
             }));
         });
     }
-
+    pub fn ui(self, root: &str, id: &str) -> TaskUi {
+        let key = format!("{root}\0{id}");
+        if let Some(ui) = self.task_ui.get_untracked().get(&key) {
+            return *ui;
+        }
+        let ui = self.owner.with_value(|owner| owner.with(TaskUi::new));
+        self.task_ui.update(|states| {
+            states.insert(key, ui);
+        });
+        ui
+    }
+    pub fn next_request(self) -> String {
+        self.sequence.update(|n| *n += 1);
+        self.sequence.get_untracked().to_string()
+    }
     pub fn send(self, command: Command) -> bool {
+        let pr_command = matches!(
+            command,
+            Command::LinkPr { .. } | Command::UnlinkPr { .. } | Command::RefreshPrs { .. }
+        );
         self.socket.with_value(|socket| {
             let result = socket
                 .borrow()
@@ -66,7 +91,9 @@ impl Context {
                 );
                 false
             } else {
-                self.notify("Working…".into(), NoticeKind::Progress);
+                if !pr_command {
+                    self.notify("Working…".into(), NoticeKind::Progress);
+                }
                 true
             }
         })
@@ -86,6 +113,23 @@ impl Context {
                 {
                     match event {
                         Event::Snapshot { projects } => self.projects.set(projects),
+                        Event::PrResult {
+                            request_id,
+                            message,
+                            error,
+                        } => {
+                            for ui in self.task_ui.get_untracked().values() {
+                                if ui.request.get_untracked() == request_id {
+                                    ui.request.set(String::new());
+                                    ui.error.set(error);
+                                    ui.message.set(message.clone());
+                                    if !error && ui.adding.get_untracked() {
+                                        ui.draft.set(String::new());
+                                        ui.linking.set(false);
+                                    }
+                                }
+                            }
+                        }
                         Event::Result { message, error } => {
                             let kind = if error {
                                 NoticeKind::Error
@@ -102,6 +146,16 @@ impl Context {
         message.forget();
         let close = Closure::<dyn FnMut(web_sys::CloseEvent)>::new(move |_| {
             self.connected.set(false);
+            for ui in self.task_ui.get_untracked().values() {
+                if !ui.request.get_untracked().is_empty() {
+                    ui.request.set(String::new());
+                    ui.error.set(true);
+                    ui.message.set(
+                        "Disconnected; check the linked PRs after reconnecting before retrying."
+                            .into(),
+                    );
+                }
+            }
             gloo_timers::callback::Timeout::new(2000, move || self.connect()).forget();
         });
         ws.set_onclose(Some(close.as_ref().unchecked_ref()));

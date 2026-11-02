@@ -27,3 +27,5 @@ mime_guess = "2"
 webbrowser = "1"
 
 tempfile = "3"
+
+url = "2"

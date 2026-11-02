@@ -132,7 +132,8 @@ impl Project {
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS task_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS task_startups(id TEXT PRIMARY KEY);
-             CREATE TABLE IF NOT EXISTS task_parking(id TEXT PRIMARY KEY)",
+             CREATE TABLE IF NOT EXISTS task_parking(id TEXT PRIMARY KEY);
+             CREATE TABLE IF NOT EXISTS github_links(task_id TEXT NOT NULL, url TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(task_id,url))",
         )?;
         Ok(Self { root, db })
     }
@@ -146,6 +147,63 @@ impl Project {
             "No project found above {}; use aide init . --repo ./repository",
             from.display()
         )
+    }
+    pub fn pull_requests(&self, id: &str) -> Result<Vec<aide_core::PrView>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT body FROM github_links WHERE task_id=? ORDER BY rowid")?;
+        let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+    pub fn all_pull_requests(&self) -> Result<Vec<(String, aide_core::PrView)>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT task_id,body FROM github_links ORDER BY rowid")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.map(|row| {
+            let (id, body) = row?;
+            Ok((id, serde_json::from_str(&body)?))
+        })
+        .collect()
+    }
+    pub fn link_pr(&self, id: &str, view: &aide_core::PrView) -> Result<bool> {
+        let _lock = self.task_lock(id)?;
+        let transaction = self.transaction()?;
+        if self.task(id)?.lifecycle != aide_core::Lifecycle::Open {
+            bail!("Task is not open");
+        }
+        let added = self.db.execute(
+            "INSERT OR IGNORE INTO github_links VALUES(?1,?2,?3)",
+            params![id, view.id.url(), serde_json::to_string(view)?],
+        )?;
+        transaction.commit()?;
+        Ok(added != 0)
+    }
+    pub fn unlink_pr(&self, id: &str, pr: &aide_core::PrId) -> Result<()> {
+        let _lock = self.task_lock(id)?;
+        let transaction = self.transaction()?;
+        if self.task(id)?.lifecycle != aide_core::Lifecycle::Open {
+            bail!("Task is not open");
+        }
+        self.db.execute(
+            "DELETE FROM github_links WHERE task_id=? AND url=?",
+            params![id, pr.url()],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+    pub fn observe_pr(&self, id: &str, view: &aide_core::PrView) -> Result<()> {
+        let transaction = self.transaction()?;
+        if self.task(id)?.lifecycle == aide_core::Lifecycle::Open {
+            self.db.execute(
+                "UPDATE github_links SET body=? WHERE task_id=? AND url=?",
+                params![serde_json::to_string(view)?, id, view.id.url()],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
     pub fn task_lock(&self, id: &str) -> Result<Lock> {
         crate::workspace::valid_id(id)?;

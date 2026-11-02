@@ -78,6 +78,35 @@ aide task list --completed
 
 Cleanup warns about live sessions, stops the entire task tmux session (including windows you added), and removes the workspace. Task history and retained conversation recordings remain available. Creating a PR or completing a review does not close the task automatically.
 
+### Link GitHub pull requests
+
+Install [GitHub CLI](https://cli.github.com/) (`brew install gh` on macOS) and sign in with `gh auth login --hostname github.com --web`. An existing login works too. GitHub monitoring is optional; `just aide-doctor` checks whether `gh` is installed. Aide delegates read-only queries to `gh` and does not copy or store its tokens. Organization permissions and SSO still apply. `GH_TOKEN`/`GITHUB_TOKEN` override the stored login; update the manager's environment and restart it when changing environment credentials.
+
+Expand a task and choose **GitHub PRs → Link PR**, paste a full PR URL, and choose **Add**. Link as many independent PRs as needed, including PRs from other repositories or forks. Links remain fixed when you move between commits, branches, or jj bookmarks. **Unlink** removes only that task's association and never changes GitHub. Completed task links remain read-only history.
+
+Each linked PR has a clickable status tag. Aide compares its author with the active `gh` account for the URL's host:
+
+- **Your PR:** grey while waiting for review, amber while CI runs, yellow for known merge blockers, and green when ready to merge. Details separate review status from CI checks. Green also requires your attention because merging is the next action. Optional failed checks do not override GitHub's merge policy.
+- **Someone else's PR:** an outstanding direct review request is yellow, labelled “again” after a previous submitted review. CI and merge readiness are not monitored. Team-only requests do not imply a personal assignment.
+- **Merged/closed:** informational, with no automatic task closure or collective completion cue.
+
+Any actionable PR puts the task in **Requires attention**, counted once. The native task/Codex badge and terminal activity remain independent. Failed refreshes keep known action reasons but mark their badges stale and grey; connection errors are shown separately from CI failures.
+
+The manager polls running CI every minute and everything else every five minutes, including merged/closed PRs on open tasks. Every manager startup refreshes all open-task links. **Refresh PRs** requests an immediate update, subject to rate-limit backoff. Browsers share the same poller; it keeps running with the browser closed. Completed tasks retain their last observation without polling.
+
+From a registered project, with the dashboard running:
+
+```sh
+aide task pr task-1234 link https://github.com/owner/repo/pull/123
+aide task pr task-1234 list
+aide task pr task-1234 refresh
+aide task pr task-1234 unlink https://github.com/owner/repo/pull/123
+```
+
+`list` works offline and reports cached observations. Associations and observations live in additive tables in the project's `.aide/state.sqlite`, outside disposable workspaces. The initial implementation accepts full URLs, uses one active `gh` account per host, and does not infer PRs from local references. Enterprise hosts are accepted by URL but require the same GraphQL fields; incompatible hosts report an error rather than a ready state. Native GitHub.com queries were verified with `gh` 2.80.0; Enterprise compatibility is not yet verified.
+
+Run `just test-aide-github` for fixture tests or `just test-aide-github-live <existing-PR-URL>` for a read-only native check. Browser acceptance lives in `tests/github.spec.js`.
+
 ### Work inside the task terminal
 
 Each task has two tmux windows:

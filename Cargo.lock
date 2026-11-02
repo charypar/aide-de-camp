@@ -38,6 +38,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "url",
  "uuid",
  "webbrowser",
 ]
@@ -49,6 +50,7 @@ dependencies = [
  "aide-core",
  "console_error_panic_hook",
  "gloo-timers",
+ "js-sys",
  "leptos",
  "serde_json",
  "wasm-bindgen",

@@ -1,4 +1,5 @@
 mod app;
+mod github;
 mod transport;
 fn main() {
     console_error_panic_hook::set_once();

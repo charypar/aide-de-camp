@@ -124,7 +124,8 @@ fn Task(root: String, id: String) -> impl IntoView {
             .find(|p: &ProjectView| p.root == root.get_value())
             .and_then(|p| p.tasks.into_iter().find(|t| t.task.id == id.get_value()))
     });
-    let expanded = RwSignal::new(false);
+    let ui = cx.ui(&root.get_value(), &id.get_value());
+    let expanded = ui.expanded;
     let summary = Memo::new(move |_| {
         task.get()
             .and_then(|t| t.summary)
@@ -220,17 +221,18 @@ fn Task(root: String, id: String) -> impl IntoView {
     };
     view! {
         <article class="task">
-            <div class="task-heading"><button class="task-title" on:click=toggle aria-expanded=move || expanded.get().to_string()>
+            <div class="task-heading" class:has-prs=move || task.get().is_some_and(|t| !t.pull_requests.is_empty())><button class="task-title" on:click=toggle aria-expanded=move || expanded.get().to_string()>
                 <span class="chevron" aria-hidden="true">{move || if expanded.get() { "▾" } else { "▸" }}</span>
                 <span class="task-summary" title=move || summary.get()>{move || summary.get()}</span>
                 <span class="task-id" title=id.get_value()>{id.get_value()}</span>
-                <span class="task-status" data-status=move || task.get().map(|t| status_name(&t.status)) title=move || task.get().map(|t| t.reason)>
-                    {move || task.get().map(|t| label(&t.status))}
+                <span class="task-status" data-status=move || task.get().map(|t| status_name(t.native_status.as_ref().unwrap_or(&t.status))) title=move || task.get().map(|t| t.reason)>
+                    {move || task.get().map(|t| label(t.native_status.as_ref().unwrap_or(&t.status)))}
                 </span>
                 <Show when=is_open><span class="terminal-status" aria-label=terminal_description title=terminal_description>
                     <span class="terminal-label">"Terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span><span class="terminal-activity">{terminal_activity}</span>
                 </span></Show>
             </button>
+                <crate::github::PrTags task=task/>
                 <Show when=is_open><button class="terminal-action" aria-label="Open terminal" title="Open terminal" on:click=attach disabled=move || !cx.connected.get()>
                     <span class="terminal-label">"Open terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span>
                 </button></Show>
@@ -238,6 +240,7 @@ fn Task(root: String, id: String) -> impl IntoView {
             <Show when=move || expanded.get()>
                 <div class="details">
                     <p class="expanded-summary">{move || summary.get()}</p>
+                    <crate::github::PrDetails task=task root=root id=id ui=ui/>
                     <p class="task-context"><span class="repo">{move || task.get().map(|t| t.task.repository)}</span><span class="reason">{move || task.get().map(|t| t.reason)}</span></p>
                     <code>{move || task.get().map(|t| t.task.workspace)}</code><button on:click=copy_path>"Copy path"</button>
                     <dl><dt>"Conversation"</dt><dd>{move || task.get().and_then(|t| t.task.thread_id).unwrap_or_else(|| "Not started".into())}</dd><dt>"Recording"</dt><dd>{move || task.get().and_then(|t| t.task.recording).unwrap_or_else(|| "Not recorded yet".into())}</dd></dl>

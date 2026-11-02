@@ -66,6 +66,12 @@ enum CodexAction {
 }
 #[derive(Subcommand)]
 enum TaskAction {
+    /// Link and inspect GitHub pull requests (uses the running dashboard).
+    Pr {
+        id: String,
+        #[command(subcommand)]
+        command: PrAction,
+    },
     Start {
         id: String,
         #[arg(long)]
@@ -108,6 +114,14 @@ enum TaskAction {
     },
 }
 
+#[derive(Subcommand)]
+enum PrAction {
+    Link { url: String },
+    Unlink { url: String },
+    List,
+    Refresh,
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     if let Some(Action::Review { args }) = &cli.command {
@@ -136,7 +150,16 @@ pub async fn run() -> Result<()> {
             command: CodexAction::Resume,
         }) => runtime.resume().await,
         Some(Action::Doctor) => {
-            for program in ["codex", "jj", "git", "tmux", "fish", "alacritty", "zed"] {
+            for program in [
+                "codex",
+                "jj",
+                "git",
+                "tmux",
+                "fish",
+                "alacritty",
+                "zed",
+                "gh",
+            ] {
                 let output = std::process::Command::new(program)
                     .arg("--version")
                     .output();
@@ -159,6 +182,62 @@ pub async fn run() -> Result<()> {
             let mut project = Project::discover(&std::env::current_dir()?)?;
             let root = project.root.display().to_string();
             match command {
+                TaskAction::Pr { id, command } => {
+                    project.task(&id)?;
+                    let request_id = uuid::Uuid::new_v4().to_string();
+                    let command = match command {
+                        PrAction::List => {
+                            let historical = project.task(&id)?.lifecycle == Lifecycle::Completed;
+                            for mut pr in project.pull_requests(&id)? {
+                                pr.historical = historical;
+                                pr.stale = !historical
+                                    && (pr.error.is_some()
+                                        || pr.observation.as_ref().is_none_or(|o| {
+                                            crate::github::now()
+                                                > o.observed_at.saturating_add(o.interval() + 30)
+                                        }));
+                                println!(
+                                    "{}\t{}\t{}\t{}\tattempt={}\t{}",
+                                    pr.id.url(),
+                                    pr.observation
+                                        .as_ref()
+                                        .map(|o| o.role.label())
+                                        .unwrap_or("Unknown"),
+                                    pr.label(),
+                                    pr.observation
+                                        .as_ref()
+                                        .map(|o| o.reasons.join("; "))
+                                        .unwrap_or_default(),
+                                    pr.last_attempt,
+                                    pr.error.as_deref().unwrap_or(if historical {
+                                        "Historical observation"
+                                    } else {
+                                        "Cached; use refresh for latest status"
+                                    })
+                                );
+                            }
+                            return Ok(());
+                        }
+                        PrAction::Link { url } => Command::LinkPr {
+                            project: root,
+                            id,
+                            url,
+                            request_id,
+                        },
+                        PrAction::Unlink { url } => Command::UnlinkPr {
+                            project: root,
+                            id,
+                            url,
+                            request_id,
+                        },
+                        PrAction::Refresh => Command::RefreshPrs {
+                            project: root,
+                            id,
+                            request_id,
+                        },
+                    };
+                    http::request(&home, command).await?;
+                }
                 TaskAction::Start {
                     id,
                     repo,
@@ -189,7 +268,8 @@ pub async fn run() -> Result<()> {
                             continue;
                         }
                         let terminal = activity.for_task(&task);
-                        let view = runtime.project_view(&project.root, task).await;
+                        let mut view = runtime.project_view(&project.root, task).await;
+                        crate::github::Github::default().decorate(&project, &mut view);
                         println!(
                             "{}\t{:?}\t{}\t{}\tterminal={}",
                             view.task.id,

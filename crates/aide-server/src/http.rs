@@ -30,6 +30,7 @@ use tokio::sync::mpsc;
 pub struct Manager {
     pub home: Home,
     pub runtime: Runtime,
+    pub github: crate::github::Github,
     pub token: String,
     pub assets: Option<PathBuf>,
 }
@@ -43,6 +44,7 @@ impl Manager {
     pub fn new(home: Home, assets: Option<PathBuf>) -> Self {
         Self {
             runtime: Runtime::new(&home),
+            github: crate::github::Github::default(),
             home,
             assets,
             token: uuid::Uuid::new_v4().to_string(),
@@ -79,6 +81,7 @@ impl Manager {
                             .await;
                         for task in &mut view.tasks {
                             Runtime::refresh_lifecycle(&project, task);
+                            self.github.decorate(&project, task);
                         }
                     }
                     (Err(e), _) | (_, Err(e)) => view.error = Some(e.to_string()),
@@ -108,6 +111,15 @@ impl Manager {
     }
     pub async fn execute(&self, command: Command) -> Result<String> {
         match command {
+            Command::LinkPr {
+                project, id, url, ..
+            } => self.github.link(&self.home, &project, &id, &url).await,
+            Command::UnlinkPr {
+                project, id, url, ..
+            } => self.github.unlink(&project, &id, &url),
+            Command::RefreshPrs { project, id, .. } => {
+                self.github.refresh(&self.home, &project, &id).await
+            }
             Command::Start {
                 project,
                 id,
@@ -244,6 +256,13 @@ pub async fn serve(home: Home, port: u16, no_open: bool, assets: Option<PathBuf>
         serde_json::to_vec(&address)?,
     )?;
     println!("Aide: {url}");
+    let polling_manager = manager.clone();
+    let polling = tokio::spawn(async move {
+        polling_manager
+            .github
+            .run(polling_manager.home.clone())
+            .await
+    });
     let restoring = manager.clone();
     let restoration = tokio::spawn(async move { restoring.restore().await });
     if !no_open {
@@ -258,6 +277,7 @@ pub async fn serve(home: Home, port: u16, no_open: bool, assets: Option<PathBuf>
         _ = tokio::signal::ctrl_c() => {},
     }
     restoration.abort();
+    polling.abort();
     let _ = fs::remove_file(home.path.join("manager.json"));
     Ok(())
 }
@@ -343,10 +363,18 @@ async fn connection(manager: Arc<Manager>, socket: WebSocket) {
                         // Lifecycle work continues if the browser disconnects.
                         // Per-task/repository locks coordinate other clients too.
                         tokio::spawn(async move {
+                            let request_id = match &command {
+                                Command::LinkPr {request_id,..} | Command::UnlinkPr {request_id,..} | Command::RefreshPrs {request_id,..} => Some(request_id.clone()),
+                                _ => None,
+                            };
                             let result = manager.execute(command).await;
                             let event = match result {
                                 Ok(message) => Event::Result { message, error: false },
                                 Err(error) => Event::Result { message: format!("{error:#}"), error: true },
+                            };
+                            let event = match (request_id,event) {
+                                (Some(request_id),Event::Result {message,error}) => Event::PrResult {request_id,message,error},
+                                (_,event) => event,
                             };
                             let _ = events.send(event).await;
                         });
@@ -385,7 +413,8 @@ pub async fn request(home: &Home, command: Command) -> Result<()> {
         .await?;
     while let Some(message) = socket.next().await {
         if let Message::Text(text) = message?
-            && let Event::Result { message, error } = serde_json::from_str(&text)?
+            && let Event::Result { message, error } | Event::PrResult { message, error, .. } =
+                serde_json::from_str(&text)?
         {
             if error {
                 bail!("{message}");

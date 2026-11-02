@@ -1,3 +1,6 @@
+pub mod github;
+pub use github::*;
+
 use serde::{Deserialize, Serialize};
 
 pub type Environment = std::collections::BTreeMap<String, String>;
@@ -69,6 +72,10 @@ pub struct TaskView {
     pub summary: Option<String>,
     #[serde(default)]
     pub terminal_activity: Option<TerminalActivity>,
+    #[serde(default)]
+    pub pull_requests: Vec<PrView>,
+    #[serde(default)]
+    pub native_status: Option<Status>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -83,6 +90,23 @@ pub struct ProjectView {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Command {
+    LinkPr {
+        project: String,
+        id: String,
+        url: String,
+        request_id: String,
+    },
+    UnlinkPr {
+        project: String,
+        id: String,
+        url: String,
+        request_id: String,
+    },
+    RefreshPrs {
+        project: String,
+        id: String,
+        request_id: String,
+    },
     Start {
         project: String,
         id: String,
@@ -123,6 +147,16 @@ pub enum Command {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    Snapshot { projects: Vec<ProjectView> },
-    Result { message: String, error: bool },
+    PrResult {
+        request_id: String,
+        message: String,
+        error: bool,
+    },
+    Snapshot {
+        projects: Vec<ProjectView>,
+    },
+    Result {
+        message: String,
+        error: bool,
+    },
 }
