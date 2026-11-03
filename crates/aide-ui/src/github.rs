@@ -55,7 +55,7 @@ fn description(pr: &PrView) -> String {
 #[component]
 pub fn PrTags(task: Memo<Option<TaskView>>) -> impl IntoView {
     view! { <div class="pr-tags">{move || task.get().map(|t| t.pull_requests.into_iter().map(|pr| {
-        view! { <a class="pr-tag" data-color=pr.color() href=pr.id.url() target="_blank" rel="noopener noreferrer" title=description(&pr)>{format!("{} · {}",pr.id.label(),pr.label())}</a> }
+        view! { <a class="pr-tag" data-color=pr.color() href=pr.id.url() target="_blank" rel="noopener noreferrer" title=description(&pr) aria-label=description(&pr)>{format!("#{}",pr.id.number)}</a> }
     }).collect_view())}</div> }
 }
 #[component]
