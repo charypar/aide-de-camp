@@ -109,7 +109,6 @@ struct Pane {
     dead: bool,
     tty: String,
     backend: bool,
-    work: bool,
     codex: Option<CodexProcess>,
 }
 
@@ -129,7 +128,6 @@ impl Pane {
                     dead: fields[3] == "1",
                     tty: normalize_tty(fields[4]),
                     backend: fields.get(5).is_some_and(|id| *id == fields[1]),
-                    work: fields.get(6).is_some_and(|id| *id == fields[1]),
                     codex: fields
                         .get(7)
                         .filter(|s| !s.is_empty())
@@ -167,13 +165,12 @@ impl Pane {
         {
             excluded.extend(processes.descendants(identity.pid));
         }
-        // Compatibility for native work panes started before process markers
-        // existed. Deliberately do not classify Python/node wrappers by name.
-        if self.work && self.codex.is_none() {
-            for pid in &members {
-                if processes.items[pid].name == "codex" {
-                    excluded.extend(processes.descendants(*pid));
-                }
+        // Native Codex belongs to agent monitoring in every pane, even when
+        // launched manually or its stored start-time marker has drifted.
+        // Exact executable names avoid hiding unrelated commands or wrappers.
+        for pid in &members {
+            if processes.items[pid].name == "codex" {
+                excluded.extend(processes.descendants(*pid));
             }
         }
         let working = members
@@ -355,6 +352,41 @@ mod tests {
             )?),
             Some(TerminalActivity::Working)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn native_codex_is_excluded_in_any_pane_despite_missing_or_stale_markers() -> Result<()> {
+        for marker in ["", r#"{"pid":21,"started":"Tue Oct 27 11:00:00 2026"}"#] {
+            let panes = Pane::parse_all(&format!(
+                "aide-test\t%3\t20\t0\t/dev/ttys003\t%1\t%2\t{marker}"
+            ))?;
+            let shell = process(20, 1, "s003", "fish");
+            let native = shell.clone()
+                + &process(21, 20, "s003", "/opt/bin/codex")
+                + &process(22, 21, "s003", "node")
+                + &process(23, 20, "s003", "codex")
+                + &process(24, 23, "s003", "cargo");
+            assert_eq!(
+                panes[0].activity(&Processes::parse(&native)?),
+                Some(TerminalActivity::Idle)
+            );
+
+            for name in ["sleep", "node", "python3", "codex-helper"] {
+                let busy = native.clone() + &process(25, 20, "s003", name);
+                assert_eq!(
+                    panes[0].activity(&Processes::parse(&busy)?),
+                    Some(TerminalActivity::Working)
+                );
+            }
+
+            // After Codex exits, a reused PID running another command counts.
+            let reused = shell + &process(21, 20, "s003", "cargo");
+            assert_eq!(
+                panes[0].activity(&Processes::parse(&reused)?),
+                Some(TerminalActivity::Working)
+            );
+        }
         Ok(())
     }
 
