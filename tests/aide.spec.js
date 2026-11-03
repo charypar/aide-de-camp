@@ -466,6 +466,10 @@ test('collapsed tasks show the summary, ID label and coloured status on one line
    writeFileSync(join(workspace,'.fixture-status'),JSON.stringify(value));
    await expect(badge).toHaveAttribute('data-status',status);
    await expect(badge).toHaveText(label);
+   if(status==='working'){
+    await expect(badge).toHaveCSS('color','rgb(35, 99, 43)');
+    await expect(badge).toHaveCSS('background-color','rgb(224, 241, 223)');
+   }
    colours.add(await badge.evaluate(el=>getComputedStyle(el).backgroundColor));
    expect((await row.boundingBox()).height).toBeLessThanOrEqual(60);
   }
@@ -611,6 +615,9 @@ test('terminal activity aggregates detached panes and ignores backend and Codex 
   await expect(row).toContainText('Fixture conversation');
   await expect(activity).toHaveText('Idle');
   await expect(row.locator('.terminal-status')).toHaveAttribute('aria-label','Terminal activity: Idle');
+  const terminalBadge=row.locator('.terminal-status');
+  const idleColor=await terminalBadge.evaluate(el=>getComputedStyle(el).color);
+  expect(idleColor).not.toBe('rgb(35, 99, 43)');
   await expect(row.locator('.terminal-action .terminal-activity')).toHaveCount(0);
   await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toHaveAttribute('title','Open terminal');
   const title=await page.title();
@@ -624,6 +631,8 @@ test('terminal activity aggregates detached panes and ignores backend and Codex 
   await r.send(tools,'sleep 90 &; set -g activity_job $last_pid');
   await expect(activity).toHaveText('Working');
   await expect(row.locator('.terminal-status')).toHaveAttribute('aria-label','Terminal activity: Working');
+  await expect(terminalBadge).toHaveCSS('color','rgb(35, 99, 43)');
+  await expect(terminalBadge).toHaveCSS('background-color','rgb(224, 241, 223)');
   await expect(row.locator('.task-status')).toHaveText('Ready');
   await expect(page).toHaveTitle(title);
   await r.send(split,'sleep 90');
@@ -631,6 +640,7 @@ test('terminal activity aggregates detached panes and ignores backend and Codex 
   await expect(activity).toHaveText('Working');
   r.tmux('send-keys','-t',split,'C-c');
   await expect(activity).toHaveText('Idle');
+  await expect(terminalBadge).toHaveCSS('color',idleColor);
   // Codex resumed in a user-added pane is also excluded, including its child.
   await r.send(tools,`'${binary}' codex resume`);
   await expect.poll(()=>r.capture(tools)).toContain('Fixture Codex conversation ready');

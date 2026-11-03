@@ -228,7 +228,7 @@ fn Task(root: String, id: String) -> impl IntoView {
                 <span class="task-status" data-status=move || task.get().map(|t| status_name(t.native_status.as_ref().unwrap_or(&t.status))) title=move || task.get().map(|t| t.reason)>
                     {move || task.get().map(|t| label(t.native_status.as_ref().unwrap_or(&t.status)))}
                 </span>
-                <Show when=is_open><span class="terminal-status" aria-label=terminal_description title=terminal_description>
+                <Show when=is_open><span class="terminal-status" class:working=move || task.get().and_then(|t| t.terminal_activity) == Some(TerminalActivity::Working) aria-label=terminal_description title=terminal_description>
                     <span class="terminal-label">"Terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span><span class="terminal-activity">{terminal_activity}</span>
                 </span></Show>
             </button>
