@@ -9,6 +9,12 @@ with open(str(path) + '.log', 'a') as log:
     log.write(json.dumps({'query': query, 'args':sys.argv[1:]}) + '\n')
 if state.get('delay'):
     time.sleep(state['delay'])
+if state.get('gate'):
+    deadline = time.monotonic() + 45
+    while Path(state['gate']).exists():
+        if time.monotonic() > deadline:
+            sys.exit('Fixture GitHub gate timed out')
+        time.sleep(.01)
 if state.get('error'):
     print('HTTP/2 ' + str(state['error']))
     if state['error'] == 429:

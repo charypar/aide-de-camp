@@ -300,7 +300,9 @@ test('closing retains its title without attention, and interrupted cleanup can b
   await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
   unlinkSync(gate);
   await expect(row.locator('.task-status')).toHaveText('Requires attention');
-  await expect(row.locator('.task-status')).toHaveAttribute('title',/Cleanup interrupted/);
+  await expect(row.locator('.task-status')).toHaveAttribute('title',/Cleanup failed:.*Fixture cleanup failure.*Retry Close task/);
+  await page.reload();
+  await expect(row.locator('.task-status')).toHaveAttribute('title',/Fixture cleanup failure/);
   await expect(page).toHaveTitle('(1·0) Aide de camp');
   unlinkSync(join(f.dir,'cleanup.fail'));
   await row.getByRole('button',{name:/closing/}).click();

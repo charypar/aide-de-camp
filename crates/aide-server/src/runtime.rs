@@ -315,7 +315,12 @@ impl Runtime {
                         return;
                     }
                     view.status = Status::Attention;
-                    view.reason = "Cleanup interrupted; retry Close task".into();
+                    view.reason = match &view.task.error {
+                        Some(error) if error.starts_with("Cleanup failed:") => {
+                            format!("{error}. Retry Close task")
+                        }
+                        _ => "Cleanup interrupted; retry Close task".into(),
+                    };
                 }
             }
             Lifecycle::Completed => {
@@ -370,6 +375,20 @@ impl Runtime {
             bail!("Explicit confirmation required to close a task");
         }
         let _transition = project.task_lock(id)?;
+        let result = self.cleanup_locked(project, id).await;
+        if let Err(error) = &result {
+            // The toast is transient, and a failed close may already have
+            // removed the runtime or workspace. Preserve the actual cause.
+            project.update(id, |task| {
+                if task.lifecycle == Lifecycle::Closing {
+                    task.error = Some(format!("Cleanup failed: {error:#}"));
+                }
+            })?;
+        }
+        result
+    }
+
+    async fn cleanup_locked(&self, project: &mut Project, id: &str) -> Result<()> {
         let current = project.task(id)?;
         if current.lifecycle == Lifecycle::Open
             && let Some(summary) = self.view(current).await.summary
@@ -380,6 +399,7 @@ impl Runtime {
             if t.lifecycle != Lifecycle::Completed {
                 t.lifecycle = Lifecycle::Closing;
                 t.desired_running = false;
+                t.error = None;
             }
         })?;
         if task.lifecycle == Lifecycle::Completed {

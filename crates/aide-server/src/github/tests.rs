@@ -376,3 +376,42 @@ async fn test_merge_checks_take_precedence_over_head_checks() {
             .contains("node(id:\"merge\")")
     );
 }
+
+#[tokio::test]
+async fn cleanup_failure_after_workspace_removal_retains_cause_and_retries() -> Result<()> {
+    use crate::{runtime::Runtime, workspace};
+    use std::path::Path;
+
+    let (_temp, home, mut project) = workspace::tests::fixture()?;
+    let task = workspace::start(&project, "closing", None)?;
+    let runtime = Runtime::new(&home);
+    let pr = link(1, aide_core::PrStatus::Ready);
+    project.link_pr(&task.id, &pr)?;
+    let db = rusqlite::Connection::open(project.root.join(".aide/state.sqlite"))?;
+    db.execute_batch(
+        "CREATE TRIGGER fail_completion BEFORE UPDATE ON tasks
+         WHEN json_extract(NEW.body, '$.lifecycle') = 'completed'
+         BEGIN SELECT RAISE(FAIL, 'fixture completion write failure'); END;",
+    )?;
+
+    assert!(runtime.cleanup(&mut project, &task.id, true).await.is_err());
+    assert!(!Path::new(&task.workspace).exists());
+    let reopened = Project::open(&project.root)?;
+    let mut view = runtime
+        .project_view(&project.root, reopened.task(&task.id)?)
+        .await;
+    crate::github::apply(&mut view, reopened.pull_requests(&task.id)?);
+    assert_eq!(view.task.lifecycle, Lifecycle::Closing);
+    assert_eq!(view.status, Status::Attention);
+    assert!(view.reason.contains("fixture completion write failure"));
+    assert!(view.reason.contains("Retry Close task"));
+    assert!(!view.reason.contains("Ready to merge"));
+
+    db.execute_batch("DROP TRIGGER fail_completion")?;
+    runtime.cleanup(&mut project, &task.id, true).await?;
+    let completed = project.task(&task.id)?;
+    assert_eq!(completed.lifecycle, Lifecycle::Completed);
+    assert!(completed.error.is_none());
+    assert_eq!(project.pull_requests(&task.id)?.len(), 1);
+    Ok(())
+}

@@ -78,7 +78,6 @@ impl PrStatus {
             Self::Ready => "green",
             Self::NeedsAttention | Self::ReviewRequested | Self::ReviewRequestedAgain => "yellow",
             Self::Merged => "purple",
-            Self::Running => "amber",
             _ => "grey",
         }
     }

@@ -266,7 +266,9 @@ impl Github {
             }
         }
         for (id, result) in results {
-            let interval = result.as_ref().map(|o| o.interval()).unwrap_or(300);
+            // Failed startup requests need a prompt retry, independent of the
+            // normal five-minute observation cadence. Host cooldowns still win.
+            let interval = result.as_ref().map(|o| o.interval()).unwrap_or(60);
             poller.due.insert(id.clone(), time + interval);
             for link in links.iter().filter(|l| l.view.id == id) {
                 // UPDATE only touches an existing, open-task association; it cannot
@@ -524,9 +526,16 @@ mod tests {
         let view = &project.pull_requests("one")?[0];
         assert!(view.error.is_some());
         assert_eq!(view.observation.as_ref().unwrap().status, PrStatus::Ready);
+        let id = view.id.clone();
+        assert!((now() + 59..=now() + 60).contains(&github.network.lock().await.due[&id]));
         write(&fixture, json!({"prs":{"1":{"status":"merged"}}}));
+        // Even a due retry must respect host backoff. Then simulate its expiry
+        // and recover through background polling, without a manual refresh.
+        github.network.lock().await.due.insert(id, now());
+        github.poll(&home).await?;
+        assert!(project.pull_requests("one")?[0].error.is_some());
         github.network.lock().await.client.cooldown.clear();
-        github.refresh(&home, root.to_str().unwrap(), "one").await?;
+        github.poll(&home).await?;
         let view = &project.pull_requests("one")?[0];
         assert!(view.error.is_none());
         assert_eq!(view.observation.as_ref().unwrap().status, PrStatus::Merged);

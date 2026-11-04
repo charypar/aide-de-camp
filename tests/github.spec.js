@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {writeFileSync,readFileSync,existsSync} from 'node:fs';
+import {writeFileSync,readFileSync,existsSync,unlinkSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {fixture,manager,stop,taskRow,cleanup,binary} from './aide-fixture.js';
 
@@ -13,6 +13,35 @@ function githubFixture(state={}) {
 const url=n=>`https://github.com/example/repo/pull/${n}`;
 async function add(row,n){await row.getByRole('button',{name:'Link PR',exact:true}).click();await row.getByLabel('PR URL').fill(url(n));await row.getByRole('button',{name:'Add',exact:true}).click();await expect(row.locator('.pr-message')).toHaveText(/PR linked|PR already linked/);}
 async function refresh(row){await row.getByRole('button',{name:'Refresh PRs'}).click();await expect(row.locator('.pr-message')).toHaveText('PR statuses refreshed');}
+
+test('startup polls without a browser; an in-flight PR refresh cannot revive a closed task',async({page})=>{
+ const f=githubFixture();let server=await manager(f);const gate=join(f.dir,'github.hold');
+ try{
+  f.run(binary,['task','recover','one']);f.run(binary,['task','attach','one','--new-window']);
+  f.run(binary,['task','start','two','--workspace-only']);
+  f.run(binary,['task','pr','one','link',url(1)]);f.run(binary,['task','pr','two','link',url(2)]);
+  await stop(server);
+  const before=f.queries().length;
+  writeFileSync(gate,'hold');f.state({gate,prs:{1:{status:'merged'},2:{status:'merged'}}});
+  server=await manager(f);
+  // Fresh cached links must still be polled on restart, before any browser connects.
+  await expect.poll(()=>f.queries().length).toBeGreaterThan(before);
+  await page.goto(server.url);const one=taskRow(page,'one'),two=taskRow(page,'two');
+  await expect(one.locator('.task-heading .pr-tag')).toHaveAttribute('title',/Stale/);
+  await one.locator('.task-title').click();
+  page.once('dialog',d=>d.accept());await one.getByRole('button',{name:'Close task',exact:true}).click();
+  await expect(one).toHaveCount(0);
+  expect(existsSync(join(f.root,'repo-tasks','one'))).toBe(false);
+  unlinkSync(gate);
+  await expect(two.locator('.task-heading .pr-tag')).toHaveAttribute('title',/Merged/);
+  await expect(page).toHaveTitle('(0·1) Aide de camp');
+  await page.reload();await expect(one).toHaveCount(0);
+  await page.getByLabel('Show completed').check();
+  await expect(one.locator('.task-status')).toHaveText('Completed');
+  await expect(one.locator('.task-heading .pr-tag')).toHaveAttribute('title',/Ready to merge.*Historical/);
+  await expect(one.getByRole('button',{name:'Open terminal',exact:true})).toHaveCount(0);
+ }finally{if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
+});
 
 test('compact PR tags align with task labels and stay clear of controls on phones',async({page})=>{
  const f=githubFixture();const server=await manager(f);
@@ -108,6 +137,8 @@ test('test-merge checks control readiness and head checks are the fallback',asyn
   await row.locator('.pr-checks summary').click();await expect(row.locator('.pr-checks')).toContainText('merge-build: SUCCESS');await expect(row.locator('.pr-checks')).not.toContainText('FAILURE');
   f.state({prs:{1:{status:'ready',merge_check:'FAILURE'}}});await refresh(row);await expect(badge).toHaveAttribute('title',/Needs attention/);await expect(badge).toHaveAttribute('data-color','yellow');await expect(row.locator('.pr-reasons')).toContainText('CI failed');
   f.state({prs:{1:{status:'running',merge_check:'NONE',merge_state:'BLOCKED'}}});await refresh(row);await expect(badge).toHaveAttribute('title',/CI running/);await expect(page).toHaveTitle('(0·1) Aide de camp');
+  await expect(badge).toHaveAttribute('data-color','grey');
+  await expect(row.locator('.pr-entry .pr-tag')).toHaveAttribute('data-color','grey');
  }finally{await stop(server);cleanup(f);}
 });
 
