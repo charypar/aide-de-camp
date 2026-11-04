@@ -168,6 +168,16 @@ impl Runtime {
         Ok(())
     }
     pub async fn project_view(&self, root: &Path, task: Task) -> TaskView {
+        self.project_view_with_github(root, task, &crate::github::Github::default())
+            .await
+    }
+
+    pub async fn project_view_with_github(
+        &self,
+        root: &Path,
+        task: Task,
+        github: &crate::github::Github,
+    ) -> TaskView {
         // Each concurrent observer owns its database connection across awaits.
         let Ok(project) = Project::open(root) else {
             return self.view(task).await;
@@ -183,6 +193,7 @@ impl Runtime {
             view = self.view(current).await;
         }
         Self::refresh_lifecycle(&project, &mut view);
+        github.decorate(&project, &mut view);
         if let Err(error) = Self::refresh_parking(&project, &mut view) {
             view.status = Status::Attention;
             view.reason = format!("Could not read task parking: {error}");
@@ -197,24 +208,22 @@ impl Runtime {
             bail!("Task is not open and ready");
         }
         if parked {
-            let view = self.view(task).await;
-            if view.status != Status::Waiting {
-                bail!("Only ready tasks can be parked");
-            }
+            let mut view = self.view(task).await;
+            crate::github::Github::default().decorate(project, &mut view);
+            return project.park_with_attention(id, view.status == Status::Attention);
         }
-        project.set_parked(id, parked)
+        project.set_parked(id, false)
     }
 
     fn refresh_parking(project: &Project, view: &mut TaskView) -> Result<()> {
-        if !project.is_parked(&view.task.id)? {
-            return Ok(());
-        }
-        if view.status == Status::Waiting {
+        let eligible = view.task.lifecycle == Lifecycle::Open
+            && matches!(
+                view.status,
+                Status::Waiting | Status::Working | Status::Attention
+            );
+        if project.observe_parking(&view.task.id, view.status == Status::Attention, eligible)? {
             view.status = Status::Parked;
-            view.reason = "Parked — waiting for something external".into();
-        } else {
-            // Work, attention and lifecycle transitions permanently end parking.
-            project.set_parked(&view.task.id, false)?;
+            view.reason = format!("Parked — waiting for something external · {}", view.reason);
         }
         Ok(())
     }
@@ -516,12 +525,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parking_does_not_hide_work_attention_or_lifecycle_changes() -> Result<()> {
+    async fn parking_does_not_hide_new_attention_or_lifecycle_changes() -> Result<()> {
         let (_temp, home, mut project) = workspace::tests::fixture()?;
         let task = workspace::start(&project, "parked", None)?;
         let runtime = Runtime::new(&home);
         for status in [
-            Status::Working,
             Status::Attention,
             Status::Starting,
             Status::Closing,
@@ -543,6 +551,41 @@ mod tests {
                 Status::Waiting
             );
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parking_existing_attention_survives_polls_until_attention_returns() -> Result<()> {
+        let (_temp, home, mut project) = workspace::tests::fixture()?;
+        let task = workspace::start(&project, "attention", None)?;
+        let runtime = Runtime::new(&home);
+        let task = project.update(&task.id, |t| t.error = Some("Needs attention".into()))?;
+        runtime.set_parked(&mut project, &task.id, true).await?;
+        let reopened = Project::open(&project.root)?;
+        reopened.save(&task)?;
+        for _ in 0..2 {
+            assert_eq!(
+                runtime
+                    .project_view(&reopened.root, task.clone())
+                    .await
+                    .status,
+                Status::Parked
+            );
+        }
+        let task = project.update(&task.id, |t| t.error = None)?;
+        assert_eq!(
+            runtime
+                .project_view(&project.root, task.clone())
+                .await
+                .status,
+            Status::Parked
+        );
+        let task = project.update(&task.id, |t| t.error = Some("Needs attention again".into()))?;
+        assert_eq!(
+            runtime.project_view(&project.root, task).await.status,
+            Status::Attention
+        );
+        assert!(!project.is_parked("attention")?);
         Ok(())
     }
 
@@ -573,13 +616,6 @@ mod tests {
                 .is_err()
         );
         project.finish_startup(&task.id)?;
-        project.update(&task.id, |t| t.error = Some("Needs attention".into()))?;
-        assert!(
-            runtime
-                .set_parked(&mut project, &task.id, true)
-                .await
-                .is_err()
-        );
         for lifecycle in [
             Lifecycle::Preparing,
             Lifecycle::Closing,

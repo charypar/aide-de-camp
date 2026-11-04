@@ -91,11 +91,11 @@ enum TaskAction {
         new_window: bool,
     },
     Detach,
-    /// Set a ready task aside while waiting for something external.
+    /// Set an open task aside while waiting for something external.
     Park {
         id: String,
     },
-    /// Return a parked task to the ready list.
+    /// Return a parked task to the active list.
     Unpark {
         id: String,
     },
@@ -268,8 +268,7 @@ pub async fn run() -> Result<()> {
                             continue;
                         }
                         let terminal = activity.for_task(&task);
-                        let mut view = runtime.project_view(&project.root, task).await;
-                        crate::github::Github::default().decorate(&project, &mut view);
+                        let view = runtime.project_view(&project.root, task).await;
                         println!(
                             "{}\t{:?}\t{}\t{}\tterminal={}",
                             view.task.id,

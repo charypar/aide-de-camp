@@ -225,8 +225,8 @@ fn Task(root: String, id: String) -> impl IntoView {
                 <span class="chevron" aria-hidden="true">{move || if expanded.get() { "▾" } else { "▸" }}</span>
                 <span class="task-summary" title=move || summary.get()>{move || summary.get()}</span>
                 <span class="task-id" title=id.get_value()>{id.get_value()}</span>
-                <span class="task-status" data-status=move || task.get().map(|t| status_name(t.native_status.as_ref().unwrap_or(&t.status))) title=move || task.get().map(|t| t.reason)>
-                    {move || task.get().map(|t| label(t.native_status.as_ref().unwrap_or(&t.status)))}
+                <span class="task-status" data-status=move || task.get().map(|t| status_name(if t.status == Status::Parked { &t.status } else { t.native_status.as_ref().unwrap_or(&t.status) })) title=move || task.get().map(|t| t.reason)>
+                    {move || task.get().map(|t| label(if t.status == Status::Parked { &t.status } else { t.native_status.as_ref().unwrap_or(&t.status) }))}
                 </span>
                 <Show when=is_open><span class="terminal-status" class:working=move || task.get().and_then(|t| t.terminal_activity) == Some(TerminalActivity::Working) aria-label=terminal_description title=terminal_description>
                     <span class="terminal-label">"Terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span><span class="terminal-activity">{terminal_activity}</span>
@@ -250,8 +250,8 @@ fn Task(root: String, id: String) -> impl IntoView {
                         None => "Terminal activity unavailable — the session is absent or process inspection did not succeed.",
                     }}</p></Show>
                     <Show when=is_open><div class="actions"><button on:click=editor>"Open Zed"</button><button on:click=review>"Review"</button><button on:click=recover>"Recover session"</button>
-                        <Show when=move || task.get().is_some_and(|t| matches!(t.status, Status::Waiting | Status::Parked))>
-                            <button on:click=toggle_parking disabled=move || !cx.connected.get() title="Set aside while waiting externally. Opening Terminal, Zed or Review, or new Codex activity, unparks it.">{move || if task.get().is_some_and(|t| t.status == Status::Parked) { "Unpark task" } else { "Park task" }}</button>
+                        <Show when=move || task.get().is_some_and(|t| matches!(t.status, Status::Waiting | Status::Working | Status::Attention | Status::Parked))>
+                            <button on:click=toggle_parking disabled=move || !cx.connected.get() title="Set aside while waiting externally. Opening Terminal, Zed or Review, or newly requiring attention, unparks it.">{move || if task.get().is_some_and(|t| t.status == Status::Parked) { "Unpark task" } else { "Park task" }}</button>
                         </Show>
                         <button class="danger" on:click=cleanup>"Close task"</button></div></Show>
                 </div>

@@ -72,7 +72,10 @@ impl Manager {
                         view.repositories = repositories;
                         view.tasks = futures_util::stream::iter(tasks)
                             .map(|t| async {
-                                let mut view = self.runtime.project_view(Path::new(&root), t).await;
+                                let mut view = self
+                                    .runtime
+                                    .project_view_with_github(Path::new(&root), t, &self.github)
+                                    .await;
                                 view.terminal_activity = activity.for_task(&view.task);
                                 view
                             })
@@ -81,7 +84,6 @@ impl Manager {
                             .await;
                         for task in &mut view.tasks {
                             Runtime::refresh_lifecycle(&project, task);
-                            self.github.decorate(&project, task);
                         }
                     }
                     (Err(e), _) | (_, Err(e)) => view.error = Some(e.to_string()),

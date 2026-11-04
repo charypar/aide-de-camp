@@ -158,3 +158,26 @@ test('damaged records and failed saves leave other PRs fresh and report recovery
   await expect(one.locator('.task-heading .pr-tag')).toHaveAttribute('data-color','green');await expect(errors).toBeEmpty();await expect(one.locator('.pr-entry .error')).toBeEmpty();
  }finally{await stop(server);cleanup(f);}
 });
+
+test('parking overrides existing PR attention until a new attention transition',async({page})=>{
+ const f=githubFixture({prs:{1:{status:'ready'}}});let server=await manager(f);
+ try{
+  await page.goto(server.url);let row=taskRow(page,'one');await row.locator('.task-title').click();await add(row,1);
+  await expect(page).toHaveTitle('(1·0) Aide de camp');
+  await row.getByRole('button',{name:'Park task',exact:true}).click();
+  await expect(row.locator('.task-status')).toHaveText('Parked');await expect(page).toHaveTitle('Aide de camp');
+  await stop(server);server=await manager(f);await page.goto(server.url);
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  expect(f.run(binary,['task','list'])).toContain('Parked');
+  await row.locator('.task-title').click();await refresh(row);
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  f.state({prs:{1:{status:'waiting'}}});await refresh(row);
+  await expect(row.locator('.task-heading .pr-tag')).toHaveAttribute('title',/Waiting for review/);
+  await expect(row.locator('.task-status')).toHaveText('Parked');
+  f.state({prs:{1:{status:'ready'}}});await refresh(row);
+  await expect(page).toHaveTitle('(1·0) Aide de camp');
+  await expect(row.locator('.task-status')).not.toHaveText('Parked');
+  f.run(binary,['task','park','one']);await expect(row.locator('.task-status')).toHaveText('Parked');
+  f.run(binary,['task','unpark','one']);await expect(page).toHaveTitle('(1·0) Aide de camp');
+ }finally{await stop(server);cleanup(f);}
+});

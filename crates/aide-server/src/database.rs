@@ -133,6 +133,7 @@ impl Project {
             "CREATE TABLE IF NOT EXISTS task_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS task_startups(id TEXT PRIMARY KEY);
              CREATE TABLE IF NOT EXISTS task_parking(id TEXT PRIMARY KEY);
+             CREATE TABLE IF NOT EXISTS task_parking_attention(id TEXT PRIMARY KEY, attention INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS github_links(task_id TEXT NOT NULL, url TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(task_id,url))",
         )?;
         Ok(Self { root, db })
@@ -270,15 +271,60 @@ impl Project {
     }
     pub fn set_parked(&self, id: &str, parked: bool) -> Result<()> {
         if parked {
-            self.db
-                .execute("INSERT OR IGNORE INTO task_parking VALUES(?)", [id])?;
-        } else {
-            self.db
-                .execute("DELETE FROM task_parking WHERE id=?", [id])?;
+            return self.park_with_attention(id, false);
         }
+        let tx = self.transaction()?;
+        tx.execute("DELETE FROM task_parking WHERE id=?", [id])?;
+        tx.execute("DELETE FROM task_parking_attention WHERE id=?", [id])?;
+        tx.commit()?;
         Ok(())
     }
 
+    pub fn park_with_attention(&self, id: &str, attention: bool) -> Result<()> {
+        let tx = self.transaction()?;
+        tx.execute("INSERT OR IGNORE INTO task_parking VALUES(?)", [id])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO task_parking_attention VALUES(?1,?2)",
+            params![id, attention],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Persist the observed edge atomically with ending parking.
+    pub fn observe_parking(&self, id: &str, attention: bool, eligible: bool) -> Result<bool> {
+        let tx = self.transaction()?;
+        let parked: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_parking WHERE id=?)",
+            [id],
+            |r| r.get(0),
+        )?;
+        if !parked {
+            return Ok(false);
+        }
+        let previous: bool = tx
+            .query_row(
+                "SELECT attention FROM task_parking_attention WHERE id=?",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(false);
+        let remains_parked = eligible && (!attention || previous);
+        if remains_parked {
+            tx.execute(
+                "INSERT OR REPLACE INTO task_parking_attention VALUES(?1,?2)",
+                params![id, attention],
+            )?;
+        } else {
+            tx.execute("DELETE FROM task_parking WHERE id=?", [id])?;
+            tx.execute("DELETE FROM task_parking_attention WHERE id=?", [id])?;
+        }
+        tx.commit()?;
+        Ok(remains_parked)
+    }
+
+    #[cfg(test)]
     pub fn is_parked(&self, id: &str) -> Result<bool> {
         Ok(self.db.query_row(
             "SELECT EXISTS(SELECT 1 FROM task_parking WHERE id=?)",

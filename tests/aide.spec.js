@@ -102,7 +102,7 @@ test('parking ignores background commands and survives a failed workspace action
  }finally{await stop(server);cleanup(f);}
 });
 
-test('parked tasks reappear for Codex work, input and backend failure',async({page})=>{
+test('parking working and attention tasks persists until new attention',async({page})=>{
  const f=fixture(),server=await manager(f);
  try{
   f.run(binary,['task','start','wake','--new-window']);
@@ -110,23 +110,31 @@ test('parked tasks reappear for Codex work, input and backend failure',async({pa
   const row=taskRow(page,'wake'),workspace=join(f.root,'repo-tasks','wake');
   await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
   for(const [native,label,title] of [
-   [{type:'active',activeFlags:[]},'Working','Aide de camp'],
    [{type:'active',activeFlags:['waitingOnApproval']},'Requires attention','(1·0) Aide de camp']
   ]){
    await expect(row.locator('.task-status')).toHaveText('Ready');
-   await row.locator('.task-title').click();await row.getByRole('button',{name:'Park task',exact:true}).click();
+   if(await row.locator('.task-title').getAttribute('aria-expanded')==='false')await row.locator('.task-title').click();await row.getByRole('button',{name:'Park task',exact:true}).click();
    await expect(row.locator('.task-status')).toHaveText('Parked');
    writeFileSync(join(workspace,'.fixture-status'),JSON.stringify(native));
    await expect(row.locator('.task-status')).toHaveText(label);
    await expect(page).toHaveTitle(title);
-   await row.locator('.task-title').click();
-   await expect(row.getByRole('button',{name:'Park task',exact:true})).toHaveCount(0);
-   expect(()=>f.run(binary,['task','park','wake'])).toThrow(/Only ready tasks/);
+   if(await row.locator('.task-title').getAttribute('aria-expanded')==='false')await row.locator('.task-title').click();
+   await row.getByRole('button',{name:'Park task',exact:true}).click();
+   await expect(row.locator('.task-status')).toHaveText('Parked');
+   await page.reload();await expect(row.locator('.task-status')).toHaveText('Parked');
+   writeFileSync(join(workspace,'.fixture-status'),JSON.stringify({type:'active',activeFlags:[]}));
+   await expect(row.locator('.task-status')).toHaveAttribute('title',/working|Working/);
+   await expect(row.locator('.task-status')).toHaveText('Parked');
+   f.run(binary,['task','unpark','wake']);await expect(row.locator('.task-status')).toHaveText('Working');
+   if(await row.locator('.task-title').getAttribute('aria-expanded')==='false')await row.locator('.task-title').click();await row.getByRole('button',{name:'Park task',exact:true}).click();
+   await expect(row.locator('.task-status')).toHaveText('Parked');
+   writeFileSync(join(workspace,'.fixture-status'),JSON.stringify(native));
+   await expect(row.locator('.task-status')).toHaveText('Requires attention');
    writeFileSync(join(workspace,'.fixture-status'),JSON.stringify({type:'idle'}));
    await expect(row.locator('.task-status')).toHaveText('Ready');
    await page.reload();await expect(row.locator('.task-status')).toHaveText('Ready');
   }
-  await row.locator('.task-title').click();await row.getByRole('button',{name:'Park task',exact:true}).click();
+  if(await row.locator('.task-title').getAttribute('aria-expanded')==='false')await row.locator('.task-title').click();await row.getByRole('button',{name:'Park task',exact:true}).click();
   await expect(row.locator('.task-status')).toHaveText('Parked');
   const sessions=f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'list-sessions','-F','#{session_name}']).trim();
   f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'send-keys','-t',`${sessions}:backend`,'C-c']);
