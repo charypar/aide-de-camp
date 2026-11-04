@@ -53,6 +53,11 @@ if args and args[0]=='app-server':
     server=socket.socket(socket.AF_UNIX);server.bind(endpoint);server.listen()
     Path('.fixture-backend.json').write_text(json.dumps({'pid':os.getpid(), 'environment':{k:v for k,v in os.environ.items() if k.startswith('AIDE_TEST_')}}))
     state={'thread':None}
+    default_instructions=None
+    if '--config' in args:
+        value=args[args.index('--config')+1]
+        if value.startswith('developer_instructions='):
+            default_instructions=json.loads(value.split('=',1)[1])
     root=Path(os.environ['AIDE_FIXTURE_RECORDINGS']); root.mkdir(exist_ok=True)
     def other_thread():
         if not state['thread'] or not Path('.fixture-other-thread').exists(): return None
@@ -69,6 +74,9 @@ if args and args[0]=='app-server':
                 if 'id' not in request:continue
                 error=None;result={}
                 if method=='initialize':result={'platformFamily':'unix','platformOs':'macos','userAgent':'fixture'}
+                elif method=='config/read':
+                    if Path('.fixture-config-error').exists():error={'message':'Fixture configuration failure'}
+                    else:result={'config':{'developer_instructions':'Existing native preferences'}}
                 elif method=='thread/loaded/list':
                     other=other_thread()
                     result={'data':([other['id']] if other else [])+([state['thread']['id']] if state['thread'] else [])}
@@ -77,6 +85,9 @@ if args and args[0]=='app-server':
                     path=root/(identity+'.jsonl')
                     if method=='thread/resume' and not path.exists():error={'message':'Missing native recording'}
                     else:
+                        effective=params.get('developerInstructions', default_instructions)
+                        if effective is not None:
+                            Path('.fixture-instructions').write_text(effective)
                         path.write_text(json.dumps({'id':identity,'cwd':os.getcwd()})+'\n')
                         state['thread']={'id':identity,'path':str(path),'cwd':os.getcwd(),'status':{'type':'idle'},'name':'Fixture conversation'}
                         result={'thread':state['thread']}
@@ -104,6 +115,8 @@ else:
     conn=socket.socket(socket.AF_UNIX);conn.connect(endpoint);handshake(conn,True)
     def call(i,m,p):frame(conn,{'id':i,'method':m,'params':p},True);return receive(conn)
     call(1,'initialize',{})
+    # Native remote TUI does not forward developer_instructions CLI overrides.
+    # Keep this boundary realistic: only backend configuration supplies defaults.
     if args and args[0]=='resume':response=call(2,'thread/resume',{'threadId':args[1]})
     else:response=call(2,'thread/start',{})
     print('Fixture Codex conversation ready',flush=True)

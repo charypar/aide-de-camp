@@ -1,6 +1,7 @@
 use crate::{
     database::{Lock, Project},
     http,
+    instructions::Instructions,
     rpc::Rpc,
     runtime::Runtime,
     terminal::{self, Terminal},
@@ -41,26 +42,40 @@ impl Runtime {
             task.id,
             log_path.display()
         );
-        let mut server = tokio::process::Command::new(
-            environment
-                .get("AIDE_CODEX")
-                .map(String::as_str)
-                .unwrap_or("codex"),
-        )
-        .args([
-            "app-server",
-            "--listen",
-            &format!("unix://{}", socket.display()),
-        ])
-        .env_clear()
-        .envs(&environment)
-        .current_dir(&task.workspace)
-        .process_group(0)
-        .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log)
-        .kill_on_drop(true)
-        .spawn()?;
+        let launch = BackendLaunch {
+            environment: &environment,
+            task: &task,
+            log: &log,
+        };
+        let instructions = match Instructions::read(&self.home, &task.key)? {
+            Some(saved) => saved,
+            None => {
+                let mut pending = Instructions::load(&self.home, &project.root)?;
+                if pending.needs_native_config()? {
+                    // Probe native configuration before publishing the task socket.
+                    // The probe never starts a conversation or submits a turn.
+                    let probe_socket = socket.with_extension("cfg");
+                    let _ = fs::remove_file(&probe_socket);
+                    let mut probe = launch.spawn(&probe_socket, None)?;
+                    let resolved = tokio::select! {
+                        result = async {
+                            let mut rpc = BackendLaunch::connect(&probe_socket, &mut probe).await?;
+                            pending.resolve(&task.workspace, &mut rpc).await
+                        } => result,
+                        _ = hangup.recv() => Err(anyhow::anyhow!("Instruction loading interrupted")),
+                        _ = terminate.recv() => Err(anyhow::anyhow!("Instruction loading interrupted")),
+                        _ = interrupt.recv() => Err(anyhow::anyhow!("Instruction loading interrupted")),
+                    };
+                    stop_backend(&mut probe).await;
+                    let _ = fs::remove_file(&probe_socket);
+                    resolved?;
+                }
+                pending.save(&self.home, &task.key)?;
+                Instructions::read(&self.home, &task.key)?
+                    .context("Missing task instruction snapshot")?
+            }
+        };
+        let mut server = launch.spawn(&socket, Some(&instructions))?;
         let result = tokio::select! {
             result = self.monitor(&project, &task, &mut server) => result,
             _ = hangup.recv() => Ok(()),
@@ -104,7 +119,9 @@ impl Runtime {
                 .as_ref()
                 .is_some_and(|p| Path::new(p).exists())
         {
-            rpc.call("thread/resume", json!({"threadId":id})).await?;
+            let params = Instructions::read(&self.home, &task.key)?
+                .map_or_else(|| json!({"threadId":id}), |saved| saved.resume_params(id));
+            rpc.call("thread/resume", params).await?;
             // Resume restores context only. Reconnect as a metadata observer;
             // native approvals continue to belong to the interactive client.
             rpc = Rpc::connect(&self.socket(task)).await?;
@@ -325,5 +342,59 @@ async fn stop_backend(server: &mut tokio::process::Child) {
             }
             let _ = server.wait().await;
         }
+    }
+}
+
+struct BackendLaunch<'a> {
+    environment: &'a Environment,
+    task: &'a Task,
+    log: &'a fs::File,
+}
+
+impl BackendLaunch<'_> {
+    fn spawn(
+        &self,
+        socket: &Path,
+        instructions: Option<&Instructions>,
+    ) -> Result<tokio::process::Child> {
+        let mut command = std::process::Command::new(
+            self.environment
+                .get("AIDE_CODEX")
+                .map(String::as_str)
+                .unwrap_or("codex"),
+        );
+        command.args([
+            "app-server",
+            "--listen",
+            &format!("unix://{}", socket.display()),
+        ]);
+        if let Some(instructions) = instructions {
+            instructions.configure(&mut command);
+        }
+        command
+            .env_clear()
+            .envs(self.environment)
+            .current_dir(&self.task.workspace)
+            .stdin(Stdio::null())
+            .stdout(self.log.try_clone()?)
+            .stderr(self.log.try_clone()?);
+        let mut command = tokio::process::Command::from(command);
+        Ok(command.process_group(0).kill_on_drop(true).spawn()?)
+    }
+
+    async fn connect(socket: &Path, server: &mut tokio::process::Child) -> Result<Rpc> {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if let Some(exit) = server.try_wait()? {
+                    bail!("Codex configuration probe exited: {exit}");
+                }
+                if let Ok(rpc) = Rpc::connect(socket).await {
+                    return Ok(rpc);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .context("Codex configuration probe timed out")?
     }
 }

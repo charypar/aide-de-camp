@@ -132,7 +132,71 @@ If a backend is stopped or its window deleted, use `aide codex resume`, `aide ta
 
 Project records live in `.aide/state.sqlite`; the personal project registry and retained native conversation recordings live under `~/.aide`. Use `--home` or `AIDE_HOME` to select another personal data directory. Codex retains its original sessions separately. A task stays associated with its saved conversation even if you start another conversation in the same directory.
 
-`aide --no-open --port 4318` serves the dashboard on localhost without opening a browser. Independent task operations run concurrently; conflicting operations on one task report busy, while workspace changes sharing a repository wait their turn. Codex's app-server transport is experimental; this version was checked with Codex 0.163.0.
+### Private working agreements
+
+Keep your personal instructions in a separate, private jj/Git repository at
+`$AIDE_HOME/agent-config` (default `~/.aide/agent-config`). This directory is separate
+from the operational databases, recordings, and task snapshots:
+
+```text
+~/.aide/agent-config/
+├── methodology.md
+├── projects.json
+├── projects/
+│   └── cat-herder/instructions.md
+├── roles/                       # Reserved; not loaded yet
+└── skills/                      # Reserved; not loaded by Aide yet
+```
+
+`methodology.md` contains your general working practices. `projects.json` maps
+canonical absolute **Aide project container roots**, not checkouts or task
+workspaces, to personal instruction directories:
+
+```json
+{
+  "/Users/me/Projects/CatHerder": "cat-herder"
+}
+```
+
+Directory names use letters, digits, hyphens and underscores, start with a letter
+or digit, and are at most 80 characters. Explicit mapping avoids accidental sharing
+between projects with the same directory basename. Update paths after moving a
+project or when using the configuration on another machine.
+
+Aide composes methodology followed by the mapped project's `instructions.md`,
+preserving existing Codex developer instructions. Codex still discovers repository
+`AGENTS.md` files normally. Personal preferences are instructed to preserve repository
+requirements. Nothing is written into shared checkouts, and ordinary Codex sessions
+outside Aide are unaffected. Empty files add no instructions. Missing methodology
+or mapping files are allowed; malformed mappings, unreadable files, and missing
+explicitly mapped instruction files produce errors. Combined developer instructions
+are limited to 64 KiB.
+
+On a task's first backend start, Aide atomically retains the exact source paths,
+text, and effective developer instructions in `~/.aide/contexts/<task-key>.json`.
+Later UI launches and backend recovery reuse this snapshot, including after the
+source files change or disappear. Edits apply to new tasks; workspace-only tasks
+take their snapshot when their backend first starts. Existing tasks without a
+snapshot adopt the configuration on their next backend restart. There is no
+refresh command yet. Native repository instructions and skills retain Codex's own
+loading behavior; they are not frozen by this snapshot.
+
+To initialize a new configuration repository, create the files above and run
+`jj git init --colocate ~/.aide/agent-config`, then review and commit the initial
+content with jj. Keep only this authored directory under version control, not the
+whole Aide home. Roles and the retrospective skill are future additions. An
+individual authored skill can use native Codex discovery via a symlink under
+`~/.agents/skills/`, which also exposes it to Codex outside Aide.
+
+Run `just test-aide-instructions` for composition, persistence, and fixture-backed
+launch/recovery checks. `just test-aide-instructions-live` uses two native Codex
+turns to verify global, private project and repository guidance plus recovery.
+Use `just install-aide` to install the updated task CLI and dashboard without
+reinstalling the independent review tool. Restart the dashboard after upgrading;
+already running task backends remain alive. Older task backends adopt this loader
+when stopped and recovered through `aide codex resume`.
+
+`aide --no-open --port 4318` serves the dashboard on localhost without opening a browser. Independent task operations run concurrently; conflicting operations on one task report busy, while workspace changes sharing a repository wait their turn. Codex's app-server transport is experimental; this version was checked with Codex 0.166.0.
 
 ## Guided review
 

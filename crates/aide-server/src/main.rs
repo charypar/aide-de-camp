@@ -3,6 +3,7 @@ mod cli;
 mod database;
 mod github;
 mod http;
+mod instructions;
 mod recording;
 mod rpc;
 mod runtime;

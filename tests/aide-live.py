@@ -19,6 +19,7 @@ BINARY = Path(__file__).resolve().parents[1] / 'target/debug/aide'
 resume_only = '--resume-only' in sys.argv
 detached_status = '--detached-status' in sys.argv
 terminal_activity = '--terminal-activity' in sys.argv
+instructions_check = '--instructions' in sys.argv
 base = Path(sys.argv[sys.argv.index('--resume-only') + 1]) if resume_only else Path(tempfile.mkdtemp(prefix='aide-native-', dir='/tmp'))
 root = base / 'Project'
 root.mkdir(exist_ok=True)
@@ -136,10 +137,18 @@ try:
     if not resume_only:
         run('git', 'init', '-b', 'main', cwd=source)
         (source / 'hello.txt').write_text('hello\n')
+        if instructions_check:
+            (source / 'AGENTS.md').write_text('When asked for Aide instruction markers, include REPOSITORY_GAMMA.\n')
         run('git', 'add', '.', cwd=source)
         run('git', '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'initial', cwd=source)
         run('git', 'clone', source, 'repo')
         run(BINARY, 'init', '.', '--repo', 'repo')
+        if instructions_check:
+            config = base / 'home/agent-config'
+            (config / 'projects/test').mkdir(parents=True)
+            (config / 'methodology.md').write_text('When asked for Aide instruction markers, include METHOD_ALPHA.\n')
+            (config / 'projects/test/instructions.md').write_text('When asked for Aide instruction markers, include PROJECT_BETA.\n')
+            (config / 'projects.json').write_text(json.dumps({str(root.resolve()): 'test'}))
         run(BINARY, 'task', 'start', 'native-check', '--workspace-only')
         start_manager()
         run(BINARY, 'task', 'recover', 'native-check')
@@ -187,7 +196,7 @@ try:
             wait(lambda: tmux('list-clients', '-t', session))
             print('Detached-status dashboard:', json.loads((base / 'home/manager.json').read_text())['url'], flush=True)
         print('Native terminal ready; sending the test turn.', flush=True)
-        prompt('Run the shell command sleep 12, then reply with exactly AIDE_LIVE_CHECK_OK. Do not modify files or use network tools.')
+        prompt('Run the shell command sleep 12, then reply with AIDE_LIVE_CHECK_OK. Do not modify files or use network tools.' + (' Also report the Aide instruction markers from your instructions.' if instructions_check else ''))
         wait(lambda: task()['thread_id'], timeout=90)
         identity = task()['thread_id']
         wait(lambda: tool_called('sleep 12'), timeout=90)
@@ -208,6 +217,14 @@ try:
         keys('C-d')
         wait(lambda: tmux('display-message', '-p', '-t', managed_pane('work'), '#{pane_current_command}') == 'fish')
         wait(lambda: assistant_said('AIDE_LIVE_CHECK_OK'), timeout=180)
+        if instructions_check:
+            for marker in ['METHOD_ALPHA', 'PROJECT_BETA', 'REPOSITORY_GAMMA']:
+                assert assistant_said(marker), 'Missing instruction marker: ' + marker
+            snapshot = base / 'home/contexts' / (task()['key'] + '.json')
+            saved_instructions = snapshot.read_text()
+            (config / 'methodology.md').write_text('Changed methodology: METHOD_CHANGED.\n')
+            (config / 'projects/test/instructions.md').unlink()
+            print('Global, private project, and repository instructions reached native turn; changing sources to check snapshot recovery.', flush=True)
         print('Active native turn completed after exiting its UI.', flush=True)
         prompt(str(BINARY) + ' codex resume')
         time.sleep(4)
@@ -242,9 +259,11 @@ try:
         prompt('set -gx AIDE_LIVE_ENV repaired; ' + str(BINARY) + ' codex resume')
         time.sleep(4)
         wait(ready)
-        prompt('Run a shell command that prints only the value of AIDE_LIVE_ENV, then reply with ENV_CHECK followed by that value. Do not modify files or use network tools.')
+        prompt('Run a shell command that prints only the value of AIDE_LIVE_ENV, then reply with ENV_CHECK followed by that value. Do not modify files or use network tools.' + (' Also report the Aide instruction markers.' if instructions_check else ''))
         wait(lambda: assistant_said('ENV_CHECK') and assistant_said('repaired'), timeout=180)
         assert task()['thread_id'] == identity
+        if instructions_check:
+            assert snapshot.read_text() == saved_instructions
         print('Fish environment repair reached resumed native backend.', flush=True)
         pane = tmux('display-message', '-p', '-t', session, '#{pane_pid}')
         stop_manager()

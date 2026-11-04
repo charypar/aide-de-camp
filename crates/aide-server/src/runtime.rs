@@ -73,6 +73,7 @@ impl Runtime {
             bail!("Only open tasks can run");
         }
         workspace::verify_workspace(task)?;
+        crate::instructions::Instructions::validate(&self.home, &task.key, &project.root)?;
         if self.socket(task).as_os_str().len() >= 104 {
             bail!("AIDE_HOME is too long for a Unix socket; choose a shorter path");
         }

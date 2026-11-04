@@ -36,6 +36,11 @@ install:
     cd crates/aide-ui && env -u NO_COLOR trunk build --release --locked
     cargo install --locked --path crates/aide-server --force
 
+# Install only Aide with its release dashboard, leaving aide-review unchanged.
+install-aide:
+    cd crates/aide-ui && env -u NO_COLOR trunk build --release --locked
+    cargo install --locked --path crates/aide-server --force
+
 # Run automated Rust tests.
 test:
     cargo test --locked -p review-core -p review-server -p aide-core -p aide-server
@@ -90,6 +95,17 @@ aide-dev-server: build-aide-ui
 # Validate native Codex observation without sending a model prompt.
 test-aide-protocol:
     cargo test --locked -p aide-server live_codex_observer -- --ignored --nocapture
+
+# Verify private instructions in native Codex, repository layering and recovery (two model turns).
+test-aide-instructions-live: build
+    python3 tests/aide-live.py --instructions
+
+# Check private instruction composition, persistence, and dashboard launch/recovery with fixtures.
+test-aide-instructions:
+    cargo test --locked -p aide-server instructions
+    just build-aide-ui
+    cargo build --locked -p aide-server
+    npx playwright test tests/instructions.spec.js
 
 # Check terminal activity with native Codex and detached tmux panes (no model prompts).
 test-aide-terminal-activity: build
