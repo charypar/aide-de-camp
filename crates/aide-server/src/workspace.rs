@@ -265,7 +265,13 @@ pub fn remove(project: &Project, task: &mut Task) -> Result<()> {
     )?;
     if names.lines().any(|n| n == task.session()) {
         if path.exists() {
-            output(path, "jj", &["status"])?;
+            // Another workspace may have rebased this working-copy commit.
+            // Recover and snapshot local edits before forgetting its registration.
+            output(
+                path,
+                "jj",
+                &["--config", "snapshot.auto-update-stale=true", "status"],
+            )?;
         }
         output(checkout, "jj", &["workspace", "forget", &task.session()])?;
     }
@@ -369,6 +375,62 @@ pub(crate) mod tests {
         assert_eq!(restored.lifecycle, Lifecycle::Open);
         Ok(())
     }
+    #[test]
+    fn cleanup_recovers_stale_workspaces_and_snapshots_local_edits() -> Result<()> {
+        let (_temp, _home, project) = fixture()?;
+        let main = project.root.join("cat-herder");
+        let mut task = start(&project, "stale", None)?;
+        let other = start(&project, "other", None)?;
+        let workspace = task.workspace.clone();
+        let path = Path::new(&workspace);
+        let revision = format!("{}@", task.session());
+
+        // Rewriting from another workspace leaves the task's files behind.
+        output(path, "jj", &["describe", "-m", "rewritten"])?;
+        fs::write(main.join("upstream"), "changed elsewhere")?;
+        output(&main, "jj", &["rebase", "-r", &revision, "-d", "@"])?;
+        fs::write(path.join("local-edit"), "preserve before removal")?;
+        let error = output(
+            path,
+            "jj",
+            &["--config", "snapshot.auto-update-stale=false", "status"],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("working copy is stale"));
+
+        task.lifecycle = Lifecycle::Closing;
+        task.error = Some(error.to_string());
+        project.save(&task)?;
+        remove(&project, &mut task)?;
+
+        assert_eq!(task.lifecycle, Lifecycle::Completed);
+        assert!(project.task(&task.id)?.error.is_none());
+        assert!(!path.exists());
+        assert!(Path::new(&other.workspace).exists());
+        // Forget may abandon the unreferenced commit; its snapshot remains in
+        // the operation immediately before forgetting the workspace.
+        assert_eq!(
+            output(
+                &main,
+                "jj",
+                &[
+                    "--at-op=@-",
+                    "file",
+                    "show",
+                    "-r",
+                    "files(local-edit)",
+                    "local-edit"
+                ]
+            )?,
+            "preserve before removal"
+        );
+        assert!(!output(&main, "jj", &["workspace", "list"])?.contains(&task.session()));
+        assert!(
+            !output(&main, "git", &["worktree", "list", "--porcelain"])?.contains(&task.workspace)
+        );
+        Ok(())
+    }
+
     #[test]
     fn cleanup_resumes_after_jj_forget_and_preserves_unowned_paths() -> Result<()> {
         let (_temp, _home, project) = fixture()?;
