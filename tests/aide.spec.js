@@ -37,6 +37,8 @@ test('parking persists, keeps inspection passive and resumes through task action
   const park=async()=>{
    await expand();await row.getByRole('button',{name:'Park task',exact:true}).click();
    await expect(row.locator('.task-status')).toHaveText('Parked');
+   await expect(row.locator('.task-title')).toHaveAttribute('aria-expanded','false');
+   await expect(row.locator('.details')).toHaveCount(0);
    await expect(page).toHaveTitle('Aide de camp');
   };
   await expect(row.locator('.task-status')).toHaveText('Ready');

@@ -179,11 +179,15 @@ fn Task(root: String, id: String) -> impl IntoView {
     };
     let toggle_parking = move |_| {
         if let Some(task) = task.get() {
-            cx.send(Command::SetParked {
+            let parked = task.status != Status::Parked;
+            let sent = cx.send(Command::SetParked {
                 project: root.get_value(),
                 id: id.get_value(),
-                parked: task.status != Status::Parked,
+                parked,
             });
+            if sent && parked {
+                expanded.set(false);
+            }
         }
     };
     let cleanup = move |_| {
