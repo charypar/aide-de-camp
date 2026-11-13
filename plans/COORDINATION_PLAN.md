@@ -257,6 +257,8 @@ Implementation acceptance must cover:
 
 ## Personal and shared configuration
 
+**Configuration browser — implemented 2026-11-13:** [AI configuration UI plan](AI_CONFIGURATION_UI_PLAN.md) adds Tasks / AI configuration cog navigation, read-only file viewing with soft wrapping and filtering, opening the configuration folder or a file in Zed, and copying file references. Editing and creation stay in the external editor. Existing task snapshots and native discovery behavior are unchanged. The linked plan records behavior, limits and validation: all 36 dashboard/browser regression cases passed, with independent headless Playwright MCP checks. Editor launches used a fixture; native Codex and actual Zed GUI integration were not rerun.
+
 - **Shared project configuration** expresses an agreed way of working with other contributors. Shared instructions, skills, and agent definitions belong in the relevant repository.
 - **Personal configuration** expresses how the user prefers to work and governs most of this workbench’s workflow. It can apply globally or to a particular project; project-scoped personal preferences are still personal, not team conventions.
 - **Global home:** `~/.aide`, including personal agent definitions, skills, and configuration. Personal project settings may be independently version-controlled outside the shared repository.

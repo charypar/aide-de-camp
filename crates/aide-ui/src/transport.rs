@@ -24,6 +24,7 @@ impl NoticeKind {
 
 #[derive(Clone, Copy)]
 pub struct Context {
+    pub configuration: crate::configuration::ConfigUi,
     pub projects: RwSignal<Vec<ProjectView>>,
     pub connected: RwSignal<bool>,
     pub message: RwSignal<String>,
@@ -37,6 +38,7 @@ pub struct Context {
 impl Context {
     pub fn new() -> Self {
         Self {
+            configuration: crate::configuration::ConfigUi::new(),
             projects: RwSignal::new(vec![]),
             connected: RwSignal::new(false),
             message: RwSignal::new(String::new()),
@@ -48,7 +50,7 @@ impl Context {
             socket: StoredValue::new_local(Rc::new(RefCell::new(None))),
         }
     }
-    fn notify(self, message: String, kind: NoticeKind) {
+    pub fn notify(self, message: String, kind: NoticeKind) {
         self.notice_kind.set(kind);
         self.message.set(message);
         self.notice_timeout.update_value(|timer| {
@@ -74,9 +76,12 @@ impl Context {
         self.sequence.get_untracked().to_string()
     }
     pub fn send(self, command: Command) -> bool {
-        let pr_command = matches!(
+        let correlated_command = matches!(
             command,
-            Command::LinkPr { .. } | Command::UnlinkPr { .. } | Command::RefreshPrs { .. }
+            Command::Configuration { .. }
+                | Command::LinkPr { .. }
+                | Command::UnlinkPr { .. }
+                | Command::RefreshPrs { .. }
         );
         self.socket.with_value(|socket| {
             let result = socket
@@ -91,7 +96,7 @@ impl Context {
                 );
                 false
             } else {
-                if !pr_command {
+                if !correlated_command {
                     self.notify("Working…".into(), NoticeKind::Progress);
                 }
                 true
@@ -112,6 +117,9 @@ impl Context {
                     && let Ok(event) = serde_json::from_str::<Event>(&text)
                 {
                     match event {
+                        Event::Configuration { request_id, result } => {
+                            self.configuration.receive(self, request_id, result)
+                        }
                         Event::Snapshot { projects } => self.projects.set(projects),
                         Event::PrResult {
                             request_id,

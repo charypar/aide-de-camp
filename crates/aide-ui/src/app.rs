@@ -7,8 +7,7 @@ pub fn App() -> impl IntoView {
     let cx = Context::new();
     provide_context(cx);
     cx.connect();
-    let focus = RwSignal::new(String::new());
-    let completed = RwSignal::new(false);
+    let section = crate::configuration::Section::signal();
     Effect::new(move |_| {
         let projects = cx.projects.get();
         let mut attention = 0;
@@ -32,18 +31,38 @@ pub fn App() -> impl IntoView {
             document.set_title(&title);
         }
     });
-    let show_all = move |_| focus.set(String::new());
-    let toggle_history = move |_| completed.update(|v| *v = !*v);
     view! {
-        <header class="topbar"><div class="brand"><strong>"Aide de camp"</strong><span class="subtitle">"Tasks"</span></div>
+        <header class="topbar"><div class="brand"><strong>"Aide de camp"</strong>
+            <nav class="section-nav" aria-label="Sections">
+                <a href="#/tasks" aria-current=move || if section.get() == crate::configuration::Section::Tasks { Some("page") } else { None }>"Tasks"</a>
+                <a class="configuration-link" href="#/configuration" aria-label="AI configuration" title="AI configuration" aria-current=move || if matches!(section.get(), crate::configuration::Section::Configuration(_)) { Some("page") } else { None }>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                        <polygon points="21.45,11.07 21.45,12.93 19.08,14.15 18.53,15.49 19.34,18.03 18.03,19.34 15.49,18.53 14.15,19.08 12.93,21.45 11.07,21.45 9.85,19.08 8.51,18.53 5.97,19.34 4.66,18.03 5.47,15.49 4.92,14.15 2.55,12.93 2.55,11.07 4.92,9.85 5.47,8.51 4.66,5.97 5.97,4.66 8.51,5.47 9.85,4.92 11.07,2.55 12.93,2.55 14.15,4.92 15.49,5.47 18.03,4.66 19.34,5.97 18.53,8.51 19.08,9.85"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                </a>
+            </nav></div>
             <span class="connection" class:offline=move || !cx.connected.get()>{move || if cx.connected.get() { "Connected" } else { "Reconnecting…" }}</span>
         </header>
         <main>
-            <nav aria-label="Project navigation"><button class="project-filter" aria-pressed=move || focus.get().is_empty().to_string() on:click=show_all>"All projects"</button><label class="history"><input type="checkbox" on:change=toggle_history prop:checked=move || completed.get()/>"Show completed"</label></nav>
             <p class="notice" data-kind=move || cx.notice_kind.get().as_str() role="status" aria-atomic="true">{move || cx.message.get()}</p>
+            <div hidden=move || section.get() != crate::configuration::Section::Tasks><Tasks/></div>
+            <crate::configuration::Configuration section=section/>
+        </main>
+    }
+}
+
+#[component]
+fn Tasks() -> impl IntoView {
+    let cx = expect_context::<Context>();
+    let focus = RwSignal::new(String::new());
+    let completed = RwSignal::new(false);
+    let show_all = move |_| focus.set(String::new());
+    let toggle_history = move |_| completed.update(|v| *v = !*v);
+    view! {
+            <nav aria-label="Project navigation"><button class="project-filter" aria-pressed=move || focus.get().is_empty().to_string() on:click=show_all>"All projects"</button><label class="history"><input type="checkbox" on:change=toggle_history prop:checked=move || completed.get()/>"Show completed"</label></nav>
             <Show when=move || cx.projects.get().is_empty()><section class="empty"><h1>"Make room for your next task"</h1><p>"Register a project from your terminal:"</p><code>"aide init . --repo ./repository"</code></section></Show>
             <For each={move || cx.projects.get().into_iter().filter(|p| focus.get().is_empty() || focus.get() == p.root).map(|p| p.root).collect::<Vec<_>>()} key=|root| root.clone() children={move |root| view! { <Project root=root focus=focus completed=completed/> }}/>
-        </main>
     }
 }
 

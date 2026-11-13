@@ -198,3 +198,36 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .has-prs .task-title { flex-basis: calc(100% - 48px); order: -2; }
   .has-prs .terminal-action { order: -1; }
 }
+
+[hidden] { display: none !important; }
+.section-nav { margin: 0; gap: 16px; font-size: 14px; }
+.section-nav a { color: var(--muted); text-decoration: none; padding: 18px 0; border-bottom: 2px solid transparent; }
+.section-nav .configuration-link { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; min-height: 44px; }
+.section-nav a[aria-current=page] { color: var(--accent); border-bottom-color: var(--accent); }
+.config-heading, .config-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+.config-heading h1 { font-size: 24px; margin: 0; }
+.config-note { color: var(--muted); line-height: 1.7; font-size: 12px; max-width: 780px; }
+.config-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 20px; margin-top: 24px; }
+.config-sidebar label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.config-files { display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin: 12px 0; max-height: 65vh; overflow: auto; }
+.config-files a { padding: 9px; border-radius: 5px; color: var(--text); text-decoration: none; overflow-wrap: anywhere; font-size: 12px; }
+.config-files a:hover { background: var(--hover); }
+.config-files a[aria-current=page] { background: #e4ecff; color: var(--accent); }
+.config-viewer { min-width: 0; padding: 16px; border: 1px solid var(--border); background: var(--surface); border-radius: 9px; }
+.config-toolbar { margin-bottom: 16px; }
+.config-toolbar > code { overflow-wrap: anywhere; }
+.config-source { overflow: auto; max-height: 70vh; font: 12px/1.8 ui-monospace, SFMono-Regular, monospace; }
+.config-line { display: flex; align-items: flex-start; min-width: 0; min-height: 1.8em; }
+.config-line.selected { background: #e4ecff; }
+.config-line > button { border: 0; border-radius: 0; background: transparent; color: var(--muted); font: inherit; padding: 0 12px 0 4px; flex: 0 0 48px; text-align: right; }
+.config-line > code { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; padding-right: 8px; }
+@media (max-width: 650px) {
+  .topbar { height: auto; min-height: 70px; gap: 8px; }
+  .brand { flex-wrap: wrap; gap: 0 12px; padding-top: 10px; }
+  .brand strong { font-size: 15px; }
+  .section-nav { gap: 12px; font-size: 12px; }
+  .section-nav a { padding: 10px 0; }
+  .connection { white-space: nowrap; font-size: 10px; }
+  .config-layout { grid-template-columns: minmax(0, 1fr); }
+  .config-files { max-height: 200px; }
+}

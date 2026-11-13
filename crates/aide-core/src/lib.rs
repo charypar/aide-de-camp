@@ -1,3 +1,5 @@
+pub mod configuration;
+pub use configuration::*;
 pub mod github;
 pub use github::*;
 
@@ -90,6 +92,10 @@ pub struct ProjectView {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Command {
+    Configuration {
+        request_id: String,
+        operation: ConfigAction,
+    },
     LinkPr {
         project: String,
         id: String,
@@ -147,6 +153,10 @@ pub enum Command {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    Configuration {
+        request_id: String,
+        result: Result<ConfigData, String>,
+    },
     PrResult {
         request_id: String,
         message: String,

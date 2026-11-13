@@ -130,3 +130,10 @@ test-aide-github:
 # Read an existing PR using the active gh account; never modifies GitHub.
 test-aide-github-live url:
     AIDE_TEST_PR_URL="$1" cargo test --locked -p aide-server live_github_read_only -- --ignored --nocapture
+
+# Check the read-only configuration browser and external-editor actions with fixtures.
+test-aide-configuration:
+    cargo test --locked -p aide-server configuration
+    just build-aide-ui
+    cargo build --locked -p aide-server
+    npx playwright test tests/configuration.spec.js

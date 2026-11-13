@@ -119,6 +119,9 @@ impl Manager {
     }
     pub async fn execute(&self, command: Command) -> Result<String> {
         match command {
+            Command::Configuration { .. } => {
+                bail!("Configuration requests require a correlated response")
+            }
             Command::LinkPr {
                 project, id, url, ..
             } => self.github.link(&self.home, &project, &id, &url).await,
@@ -368,6 +371,20 @@ async fn connection(manager: Arc<Manager>, socket: WebSocket) {
                     Ok(command) => {
                         let manager = manager.clone();
                         let events = events.clone();
+                        if let Command::Configuration { request_id, operation } = command {
+                            tokio::spawn(async move {
+                                let result = tokio::task::spawn_blocking(move || {
+                                    crate::configuration::AgentConfig::new(manager.home.path.join("agent-config")).execute(operation)
+                                }).await;
+                                let result = match result {
+                                    Ok(result) => result.map_err(|error| format!("{error:#}")),
+                                    Err(error) => Err(error.to_string()),
+                                };
+                                let _ = events.send(Event::Configuration { request_id, result }).await;
+                            });
+                            continue;
+                        }
+
                         // Lifecycle work continues if the browser disconnects.
                         // Per-task/repository locks coordinate other clients too.
                         tokio::spawn(async move {

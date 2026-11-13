@@ -1,4 +1,5 @@
 mod app;
+mod configuration;
 mod github;
 mod transport;
 fn main() {

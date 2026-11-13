@@ -134,6 +134,20 @@ Project records live in `.aide/state.sqlite`; the personal project registry and 
 
 ### Private working agreements
 
+The dashboard's **AI configuration** cog in the header browses these private files.
+Filter by filename or path, select a document to read its soft-wrapped text, and click a line number
+before **Copy reference** to copy an absolute `path:line` reference. **Open in Zed**
+opens the selected file at that line; **Open folder in Zed** opens the configuration
+folder for editing or creating files. Use **Refresh** after external edits. Section
+links support browser history and reload, and returning to Tasks preserves its view.
+
+The browser never writes configuration files or installs skills. It shows supported
+text documents under `projects/`, `skills/` and `roles/`, plus `methodology.md` and
+`projects.json`. Symlinks and VCS internals are excluded. The viewer limits files to
+256 KiB and 10,000 newline characters; larger files can still be opened in Zed.
+If the directory is absent, create it externally at the displayed path.
+`just test-aide-configuration` checks this flow with a fixture editor launcher.
+
 Keep your personal instructions in a separate, private jj/Git repository at
 `$AIDE_HOME/agent-config` (default `~/.aide/agent-config`). This directory is separate
 from the operational databases, recordings, and task snapshots:
