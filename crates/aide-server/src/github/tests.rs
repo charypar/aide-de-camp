@@ -138,7 +138,7 @@ async fn roles_statuses_and_policy_are_read_from_the_api() {
 #[tokio::test]
 async fn partial_responses_are_isolated_and_paginated_checks_can_block_readiness() {
     let (_dir, mut client) = fixture(
-        json!({"prs":{"1":{"status":"inaccessible"},"2":{"partial":true},"3":{"paginated":true},"4":{}}}),
+        json!({"prs":{"1":{"status":"inaccessible"},"2":{"partial":true},"3":{"paginated":true,"merge_state":"BLOCKED"},"4":{}}}),
     );
     let ids: Vec<_> = (1..=4).map(|n| link(n, PrStatus::Ready).id).collect();
     let results = client.fetch(&ids).await.unwrap();
@@ -324,7 +324,7 @@ async fn test_merge_checks_take_precedence_over_head_checks() {
         "4":{"status":"failed","merge_check":"NONE","merge_state":"BLOCKED"},
         "5":{"status":"running","merge_check":"SUCCESS"},
         "6":{"status":"failed","merge_check":"IN_PROGRESS"},
-        "7":{"status":"ready","merge_check":"SUCCESS","merge_paginated":true},
+        "7":{"status":"ready","merge_check":"SUCCESS","merge_paginated":true,"merge_state":"BLOCKED"},
         "8":{"status":"ready","merge_check":"MALFORMED"},
         "9":{"status":"failed","paginated":true,"merge_check":"SUCCESS"}
     }}));
@@ -414,4 +414,37 @@ async fn cleanup_failure_after_workspace_removal_retains_cause_and_retries() -> 
     assert!(completed.error.is_none());
     assert_eq!(project.pull_requests(&task.id)?.len(), 1);
     Ok(())
+}
+
+#[tokio::test]
+async fn clean_mergeable_pr_is_not_blocked_by_superseded_required_failure() {
+    let (_dir, mut client) = fixture(json!({"prs":{
+        "1":{"status":"ready","superseded_failure":true},
+        "2":{"status":"ready","superseded_failure":true,"merge_state":"BLOCKED"},
+        "3":{"status":"ready","superseded_failure":true,"merge_state":"UNKNOWN"},
+        "4":{"status":"ready","superseded_failure":true,"mergeable":"UNKNOWN"},
+        "5":{"status":"feedback","merge_state":"CLEAN","superseded_failure":true}
+    }}));
+    let ids: Vec<_> = (1..=5).map(|n| link(n, PrStatus::Unknown).id).collect();
+    let results = client.fetch(&ids).await.unwrap();
+    for (id, result) in results {
+        let o = result.unwrap();
+        assert_eq!(
+            o.status,
+            if id.number == 1 {
+                PrStatus::Ready
+            } else {
+                PrStatus::NeedsAttention
+            },
+            "PR {}",
+            id.number
+        );
+        assert_eq!(o.checks.len(), 2);
+        assert_eq!(o.checks[0].result, "FAILURE");
+        assert_eq!(o.checks[1].result, "SUCCESS");
+        assert_eq!(
+            o.reasons.contains(&"CI failed".into()),
+            (2..=4).contains(&id.number)
+        );
+    }
 }

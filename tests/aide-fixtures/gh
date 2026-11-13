@@ -49,6 +49,8 @@ for alias, number in re.findall(r'(p\d+):repository\(.*?pullRequest\(number:(\d+
             raise AssertionError('CI query made for review PR')
         result = 'IN_PROGRESS' if mode == 'running' else 'FAILURE' if mode in ['failed','optional_failed'] else 'SUCCESS'
         checks = [] if options.get('no_checks') else [{'__typename':'CheckRun','name':'build','status':'IN_PROGRESS' if mode == 'running' else 'COMPLETED','conclusion':None if mode == 'running' else result,'detailsUrl':'https://github.com/example/repo/actions/runs/1','isRequired':mode != 'optional_failed'}]
+        if options.get('superseded_failure'):
+            checks.insert(0, {**checks[0], 'status':'COMPLETED', 'conclusion':'FAILURE'})
         rollup = {'contexts':{'nodes':checks,'pageInfo':{'hasNextPage':options.get('paginated',False),'endCursor':'next'}}}
         pr.update({'isDraft':mode == 'draft','mergeable':'CONFLICTING' if mode == 'conflict' else 'UNKNOWN' if mode=='unknown' else 'MERGEABLE',
                    'mergeStateStatus':'UNSTABLE' if mode=='optional_failed' else 'DIRTY' if mode == 'conflict' else 'BEHIND' if mode=='behind' else 'UNKNOWN' if mode=='unknown' else 'BLOCKED' if mode in ['failed','waiting','feedback','blocked','running'] else 'CLEAN',
@@ -63,6 +65,10 @@ for alias, number in re.findall(r'(p\d+):repository\(.*?pullRequest\(number:(\d+
                 merge_rollup = {'contexts':{}}
             pr['potentialMergeCommit'] = {'id':'merge','oid':'merge-sha','statusCheckRollup':merge_rollup}
             pr['mergeStateStatus'] = options.get('merge_state', 'BLOCKED' if result in ['FAILURE','IN_PROGRESS'] else 'CLEAN')
+        if 'merge_state' in options:
+            pr['mergeStateStatus'] = options['merge_state']
+        if 'mergeable' in options:
+            pr['mergeable'] = options['mergeable']
         if options.get('partial'):
             errors.append({'path':[alias,'pullRequest','commits'],'message':'Access denied'})
     data[alias] = {'pullRequest':pr}

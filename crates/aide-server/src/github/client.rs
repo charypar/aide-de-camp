@@ -520,7 +520,11 @@ fn classify_implementation(pr: &Value, o: &mut PrObservation) -> Result<()> {
     if review == "CHANGES_REQUESTED" {
         o.reasons.push("Changes requested".into());
     }
-    if required_failure {
+    // Rollups can retain failed runs alongside their successful replacements.
+    // GitHub's positive merge evaluation is authoritative; do not guess which
+    // same-named checks supersede each other across apps or workflows.
+    let checks_satisfied = merge == MergeState::Clean && mergeable == "MERGEABLE";
+    if required_failure && !checks_satisfied {
         o.reasons.push("CI failed".into());
     }
     if merge == MergeState::Dirty || mergeable == "CONFLICTING" {

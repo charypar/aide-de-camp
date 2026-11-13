@@ -181,3 +181,19 @@ test('parking overrides existing PR attention until a new attention transition',
   f.run(binary,['task','unpark','one']);await expect(page).toHaveTitle('(1·0) Aide de camp');
  }finally{await stop(server);cleanup(f);}
 });
+
+test('superseded required failures do not override GitHub readiness after refresh or reload',async({page})=>{
+ const f=githubFixture({prs:{1:{status:'ready',superseded_failure:true,merge_state:'BLOCKED'}}});const server=await manager(f);
+ try{
+  await page.goto(server.url);const row=taskRow(page,'one');await row.locator('.task-title').click();await add(row,1);
+  const badge=row.locator('.task-heading .pr-tag');
+  await expect(badge).toHaveAttribute('title',/Needs attention/);
+  f.state({prs:{1:{status:'ready',superseded_failure:true}}});await refresh(row);
+  await expect(badge).toHaveAttribute('title',/Ready to merge/);await expect(badge).toHaveAttribute('data-color','green');
+  await expect(row.locator('.pr-reasons')).not.toContainText('CI failed');
+  await page.reload();await expect(badge).toHaveAttribute('title',/Ready to merge/);
+  await row.locator('.task-title').click();
+  f.state({prs:{1:{status:'failed'}}});await refresh(row);
+  await expect(badge).toHaveAttribute('title',/Needs attention/);await expect(row.locator('.pr-reasons')).toContainText('CI failed');
+ }finally{await stop(server);cleanup(f);}
+});
