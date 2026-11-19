@@ -454,6 +454,34 @@ impl Project {
         transaction.commit()?;
         Ok(())
     }
+
+    /// Explicit user selection is the only operation allowed to replace a binding.
+    /// Compare the previous identity inside the transaction; stale workers cannot
+    /// undo this through the ordinary first-association path.
+    pub fn repin_conversation(&self, previous: &Task, selected: &Task) -> Result<()> {
+        let transaction = self.transaction()?;
+        let mut current = self.task(&previous.id)?;
+        if current.lifecycle != aide_core::Lifecycle::Open
+            || current.key != previous.key
+            || (current.thread_id != previous.thread_id
+                && !(current.thread_id == selected.thread_id
+                    && current.native_path == selected.native_path))
+        {
+            bail!("Task changed while selecting a conversation; try again");
+        }
+        if selected.thread_id.is_none() || selected.native_path.is_none() {
+            bail!("Selected conversation has no durable history");
+        }
+        current.thread_id.clone_from(&selected.thread_id);
+        current.native_path.clone_from(&selected.native_path);
+        current.recording.clone_from(&selected.recording);
+        current.error = None;
+        self.save(&current)?;
+        self.db
+            .execute("DELETE FROM task_summaries WHERE id=?", [&current.id])?;
+        transaction.commit()?;
+        Ok(())
+    }
     pub fn update(&self, id: &str, change: impl FnOnce(&mut Task)) -> Result<Task> {
         let transaction = self.transaction()?;
         let mut task = self.task(id)?;
@@ -542,6 +570,49 @@ mod tests {
         let task = project.task("task")?;
         assert_eq!(task.created, 160);
         assert_eq!(task.thread_id.as_deref(), Some("original"));
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_repin_is_atomic_and_stale_observers_cannot_undo_it() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let project = Project::init(temp.path())?;
+        let mut task = Task {
+            id: "task".into(),
+            key: "key".into(),
+            repository: "repo".into(),
+            workspace: temp.path().display().to_string(),
+            lifecycle: Lifecycle::Open,
+            desired_running: true,
+            thread_id: Some("original".into()),
+            native_path: Some("/original".into()),
+            recording: Some("/retained".into()),
+            recovered: false,
+            error: None,
+            created: 0,
+        };
+        project.save(&task)?;
+        project.remember_summary(&task.id, "Old title")?;
+        let previous = task.clone();
+        task.thread_id = Some("fork".into());
+        task.native_path = Some("/fork".into());
+        project.repin_conversation(&previous, &task)?;
+        assert!(project.task_summary(&task.id)?.is_none());
+        assert!(
+            project
+                .bind_conversation("task", "original", "/original", "/retained")
+                .is_err()
+        );
+        assert!(project.repin_conversation(&previous, &previous).is_err());
+        drop(project);
+        let project = Project::open(temp.path())?;
+        assert_eq!(project.task("task")?.thread_id.as_deref(), Some("fork"));
+        // An older running observer may have discovered the exact new fork
+        // before the CLI commits. Completing that same selection is safe.
+        project.repin_conversation(&previous, &task)?;
+        project.update("task", |t| t.lifecycle = Lifecycle::Completed)?;
+        assert!(project.repin_conversation(&task, &previous).is_err());
+        assert_eq!(project.task("task")?.thread_id.as_deref(), Some("fork"));
         Ok(())
     }
 

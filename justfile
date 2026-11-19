@@ -126,6 +126,21 @@ aide-dev-server: build-aide-ui
 test-aide-protocol:
     cargo test --locked -p aide-server live_codex_observer -- --ignored --nocapture
 
+# Check conversation selection, persistence, and restart recovery with disposable fixtures.
+test-aide-conversations: build-aide-ui
+    cargo test --locked -p aide-server -- --test-threads=1
+    cargo build --locked -p aide-server
+    npx playwright test tests/aide.spec.js -g 'conversation selection forks|stored conversation remains|independent backend'
+
+# Check native listing/fork/resume with an isolated recording copy; no model prompts.
+test-aide-conversations-live recording:
+    python3 tests/aide-conversation-live.py "$1"
+
+# Exercise the actual Codex fork picker with arrows/cancellation and isolated copied history.
+test-aide-picker-live recording:
+    cargo build --locked -p aide-server
+    python3 tests/aide-picker-live.py "$1"
+
 # Verify private instructions in native Codex, repository layering and recovery (two model turns).
 test-aide-instructions-live: build
     python3 tests/aide-live.py --instructions

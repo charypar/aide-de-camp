@@ -134,7 +134,17 @@ Stopping the dashboard leaves tasks running. Starting it again reconnects to sur
 
 If a backend is stopped or its window deleted, use `aide codex resume`, `aide task attach <id>`, or the dashboard's **Recover session** action. Repair requires the dashboard and preserves user-added windows.
 
-Project records live in `.aide/state.sqlite`; the personal project registry and retained native conversation recordings live under `~/.aide`. Use `--home` or `AIDE_HOME` to select another personal data directory. Codex retains its original sessions separately. A task stays associated with its saved conversation even if you start another conversation in the same directory.
+To recover history from an older task, exit Codex in the destination task's terminals and run:
+
+```sh
+aide codex resume --pick
+# Or select a known native conversation ID directly:
+aide codex resume <conversation-id>
+```
+
+This opens Codex's native fork picker across all workspaces on that host, including saved history from completed Aide tasks. Type to search, use the arrow keys and Enter to select, or Ctrl-C to quit without changing the binding. Codex labels Escape as creating a new session; that fallback is rejected here to preserve the task's existing binding. Selection forks the history into a new conversation in the **current task's workspace**, using that task's saved private instructions, and explicitly pins the fork for monitoring and recovery. The original history is preserved. No prompt or tool execution is submitted. An active turn or another open Codex UI in the destination task prevents switching. Passing the already pinned ID directly just resumes it; the native picker always forks the chosen history; plain `aide codex resume` continues the pinned conversation without showing a picker. Remote tasks select history on their own host; this does not copy conversations between machines.
+
+Project records live in `.aide/state.sqlite`; the personal project registry and retained native conversation recordings live under `~/.aide`. Use `--home` or `AIDE_HOME` to select another personal data directory. Codex retains its original sessions separately. A task stays associated with its saved conversation even if you start another conversation in the same directory; only explicit history selection through `aide codex resume` repins it.
 
 ### Private working agreements
 

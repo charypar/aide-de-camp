@@ -80,6 +80,58 @@ pub struct CodexProcess {
 }
 
 impl CodexProcess {
+    pub fn ensure_no_ui(task: &Task) -> Result<()> {
+        Self::ensure_no_other_ui(task, None)
+    }
+
+    pub fn ensure_no_other_ui(task: &Task, picker_pid: Option<u32>) -> Result<()> {
+        let text = Terminal::run(&[
+            "list-panes",
+            "-s",
+            "-t",
+            &task.session(),
+            "-F",
+            "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_tty}\t#{@aide-backend}\t#{@aide-work}\t#{@aide-codex}",
+        ])?;
+        let output = Command::new("ps")
+            .args(["-axo", "pid=,ppid=,tty=,stat=,lstart=,comm="])
+            .env("LC_ALL", "C")
+            .output()?;
+        if !output.status.success() {
+            bail!("Cannot check task terminals before selecting a conversation");
+        }
+        let processes = Processes::parse(&String::from_utf8(output.stdout)?)?;
+        let picker = picker_pid
+            .map(|pid| processes.descendants(pid))
+            .unwrap_or_default();
+        for pane in Pane::parse_all(&text)? {
+            if pane.backend || pane.dead {
+                continue;
+            }
+            let members: HashSet<_> = processes
+                .descendants(pane.pid)
+                .difference(&picker)
+                .copied()
+                .collect();
+            let native_ui = members
+                .iter()
+                .any(|pid| processes.items[pid].name == "codex");
+            let managed_ui = pane.codex.as_ref().is_some_and(|identity| {
+                members.contains(&identity.pid)
+                    && processes
+                        .items
+                        .get(&identity.pid)
+                        .is_some_and(|p| p.started == identity.started && !p.state.starts_with('Z'))
+            });
+            if native_ui || managed_ui {
+                bail!(
+                    "Exit Codex in this task's terminals before selecting another conversation; the backend may stay running"
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub fn remember() -> Result<()> {
         let pane = std::env::var("TMUX_PANE").context("Missing task pane")?;
         let pid = std::process::id();

@@ -845,3 +845,77 @@ test('slow repository work leaves one dashboard responsive; shared repo and task
   expect(()=>f.run(binary,['task','recover','healthy'])).toThrow(/open/);
  }finally{if(existsSync(join(gates,'repo.hold')))unlinkSync(join(gates,'repo.hold'));await stop(server);cleanup(f);}
 });
+
+test('conversation selection forks saved history, cancels safely and survives backend recovery',async({page})=>{
+ test.setTimeout(90000);
+ const f=fixture();let server=await manager(f);
+ try {
+  f.run(binary,['task','start','repin','--workspace-only']);
+  f.run(binary,['task','recover','repin']);
+  const r=runtimeTools(f,'repin'),work=r.pane('work');
+  const workspace=join(f.root,'repo-tasks','repin');
+  await page.goto(server.url);
+  const row=taskRow(page,'repin');
+  await expect(row).toContainText('Fixture conversation');
+  await row.locator('.task-title').click();
+  const conversation=row.locator('dd').first();
+  await expect(conversation).not.toHaveText('Not started');
+  const original=await conversation.textContent();
+  const source=join(f.env.AIDE_FIXTURE_RECORDINGS,'saved-history.jsonl');
+  const history=JSON.stringify({id:'saved-history',cwd:'/deleted/old-task',name:'Original compile-time task'})+'\nOriginal messages retained\n';
+  writeFileSync(source,history);
+  // Reject switching while another native UI is open in the task session.
+  const extra=r.tmux('new-window','-d','-P','-F','#{pane_id}','-t',r.session,'fish');
+  await r.send(extra,`'${binary}' codex resume saved-history`);
+  await expect.poll(()=>r.capture(extra)).toContain('Exit Codex');
+  await expect(conversation).toHaveText(original);
+  r.tmux('send-keys','-t',work,'C-d');
+  await expect.poll(()=>r.tmux('display-message','-p','-t',work,'#{pane_current_command}')).toBe('fish');
+  await r.send(work,`'${binary}' codex resume --pick`);
+  await expect.poll(()=>r.capture(work)).toContain('Fixture native fork picker');
+  await r.send(work,'q');
+  await expect.poll(()=>r.tmux('display-message','-p','-t',work,'#{pane_current_command}')).toBe('fish');
+  await expect(conversation).toHaveText(original);
+  writeFileSync(join(workspace,'.fixture-status'),JSON.stringify({type:'active',activeFlags:[]}));
+  await r.send(work,`'${binary}' codex resume saved-history`);
+  await expect.poll(()=>r.capture(work)).toContain('is not idle');
+  await expect(conversation).toHaveText(original);
+  unlinkSync(join(workspace,'.fixture-status'));
+  writeFileSync(join(workspace,'.fixture-fork-error'),'yes');
+  await r.send(work,`'${binary}' codex resume saved-history`);
+  await expect.poll(()=>r.capture(work)).toContain('Fixture fork failure');
+  await expect(conversation).toHaveText(original);
+  await r.send(work,`'${binary}' codex resume --pick`);
+  await expect.poll(()=>r.capture(work)).toContain('Fixture native fork picker');
+  await r.send(work,'saved-history');
+  await expect.poll(()=>r.tmux('display-message','-p','-t',work,'#{pane_current_command}')).toBe('fish');
+  await expect(conversation).toHaveText(original);
+  unlinkSync(join(workspace,'.fixture-fork-error'));
+  writeFileSync(join(workspace,'.fixture-picker-protocol'),'yes');
+  await r.send(work,`'${binary}' codex resume --pick`);
+  await expect.poll(()=>r.capture(work)).toContain('Fixture native fork picker');
+  await r.send(work,'saved-history');
+  await expect.poll(()=>r.capture(work)).toContain('Fixture native selection pinned before reply');
+  await expect(conversation).toHaveText(/^fork-/);
+  const fork=await conversation.textContent();
+  expect(readFileSync(source,'utf8')).toBe(history);
+  expect(readFileSync(join(f.env.AIDE_FIXTURE_RECORDINGS,`${fork}.jsonl`),'utf8')).toContain('Original messages retained');
+  const params=JSON.parse(readFileSync(join(workspace,'.fixture-fork-params'),'utf8'));
+  expect(params.cwd).toBe(realpathSync(workspace));
+  expect(params.threadId).toBe('saved-history');
+  expect(params.developerInstructions).toBe('Existing native preferences');
+  expect(params.excludeTurns).toBe(true);
+  expect(params.ephemeral).toBe(false);
+  expect(JSON.parse(readFileSync(join(workspace,'.fixture-native-approval'),'utf8'))).toEqual({id:3,result:{decision:'accept'}});
+  await page.reload();await row.locator('.task-title').click();await expect(conversation).toHaveText(fork);
+  // Plain resume and full backend recovery both retain the explicitly pinned fork.
+  r.tmux('send-keys','-t',work,'C-d');
+  await expect.poll(()=>r.tmux('display-message','-p','-t',work,'#{pane_current_command}')).toBe('fish');
+  await r.send(work,`'${binary}' codex resume`);
+  await expect.poll(()=>r.tmux('display-message','-p','-t',work,'#{pane_current_command}')).not.toBe('fish');
+  await expect(conversation).toHaveText(fork);
+  await stop(server);r.tmux('kill-session','-t',r.session);
+  server=await manager(f);
+  await page.goto(server.url);await row.locator('.task-title').click();await expect(conversation).toHaveText(fork);
+ } finally {await stop(server);cleanup(f);}
+});

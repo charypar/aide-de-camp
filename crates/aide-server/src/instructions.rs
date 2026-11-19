@@ -156,6 +156,30 @@ impl Instructions {
         params
     }
 
+    pub async fn fork_params(
+        &self,
+        id: &str,
+        workspace: &str,
+        rpc: &mut Rpc,
+    ) -> Result<serde_json::Value> {
+        let mut params = self.resume_params(id);
+        params["cwd"] = json!(workspace);
+        if self.developer_instructions.is_none() {
+            // A task without private overrides uses its own native configuration,
+            // not developer instructions carried by the source conversation.
+            let config = rpc.call("config/read", json!({"cwd": workspace})).await?;
+            if !config["config"].is_object() {
+                bail!("Codex returned no effective configuration");
+            }
+            let native = &config["config"]["developer_instructions"];
+            if !native.is_null() && !native.is_string() {
+                bail!("Codex returned invalid developer instructions");
+            }
+            params["developerInstructions"] = json!(native.as_str().unwrap_or_default());
+        }
+        Ok(params)
+    }
+
     pub fn configure(&self, command: &mut std::process::Command) {
         if let Some(text) = &self.developer_instructions {
             command

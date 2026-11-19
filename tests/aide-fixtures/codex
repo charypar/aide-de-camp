@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Controlled native-protocol fixture. No model or network calls."""
 import base64, hashlib, json, os, signal, socket, struct, subprocess, sys, threading, time
+import sqlite3
 from pathlib import Path
 
 def frame(conn, value, masked=False):
@@ -80,6 +81,33 @@ if args and args[0]=='app-server':
                 elif method=='thread/loaded/list':
                     other=other_thread()
                     result={'data':([other['id']] if other else [])+([state['thread']['id']] if state['thread'] else [])}
+                elif method=='thread/list':
+                    threads=[]
+                    if not params.get('archived'):
+                        for path in root.glob('*.jsonl'):
+                            try:meta=json.loads(path.read_text().splitlines()[0])
+                            except (ValueError,IndexError):continue
+                            threads.append({'id':meta['id'],'cwd':meta['cwd'],'name':meta.get('name','Fixture conversation'),'updatedAt':1,'source':'cli','threadSource':'user'})
+                    result={'data':threads,'nextCursor':None}
+                elif method=='thread/fork':
+                    if Path('.fixture-picker-protocol').exists():
+                        frame(conn,{'id':request['id'],'method':'item/commandExecution/requestApproval','params':{'threadId':params['threadId']}})
+                        approval=receive(conn)
+                        assert approval=={'id':request['id'],'result':{'decision':'accept'}}
+                        Path('.fixture-native-approval').write_text(json.dumps(approval))
+                        frame(conn,{'id':'unrelated','result':{'thread':{'id':'wrong-fork'}}})
+                        frame(conn,{'method':'thread/started','params':{'thread':{'id':'notification-only'}}})
+                    source=root/(params['threadId']+'.jsonl')
+                    if Path('.fixture-fork-error').exists():error={'message':'Fixture fork failure'}
+                    elif not source.exists():error={'message':'Missing source history'}
+                    else:
+                        identity='fork-'+str(time.time_ns())
+                        path=root/(identity+'.jsonl')
+                        cwd=params.get('cwd',os.getcwd())
+                        path.write_text(json.dumps({'id':identity,'cwd':cwd})+'\n'+source.read_text())
+                        state['thread']={'id':identity,'path':str(path),'cwd':cwd,'status':{'type':'idle'},'name':'Forked conversation'}
+                        Path('.fixture-fork-params').write_text(json.dumps(params))
+                        result={'thread':state['thread']}
                 elif method in ('thread/start','thread/resume'):
                     identity=params.get('threadId') or 'fixture-'+str(time.time_ns())
                     path=root/(identity+'.jsonl')
@@ -88,7 +116,7 @@ if args and args[0]=='app-server':
                         effective=params.get('developerInstructions', default_instructions)
                         if effective is not None:
                             Path('.fixture-instructions').write_text(effective)
-                        path.write_text(json.dumps({'id':identity,'cwd':os.getcwd()})+'\n')
+                        if not path.exists():path.write_text(json.dumps({'id':identity,'cwd':params.get('cwd',os.getcwd())})+'\n')
                         state['thread']={'id':identity,'path':str(path),'cwd':os.getcwd(),'status':{'type':'idle'},'name':'Fixture conversation'}
                         result={'thread':state['thread']}
                 elif method=='thread/read':
@@ -96,7 +124,11 @@ if args and args[0]=='app-server':
                     other=other_thread()
                     selected=known if known.get('id')==params.get('threadId') else other
                     if not selected or selected.get('id')!=params.get('threadId'):
-                        error={'message':'Unknown thread'}
+                        saved=root/(params['threadId']+'.jsonl')
+                        if saved.exists():
+                            meta=json.loads(saved.read_text().splitlines()[0])
+                            selected={'id':meta['id'],'cwd':meta['cwd'],'path':str(saved),'status':{'type':'notLoaded'},'threadSource':'user'}
+                        else:error={'message':'Unknown thread'}
                     t=dict(selected or {})
                     control=Path(os.getcwd())/'.fixture-status'
                     if control.exists():t['status']=json.loads(control.read_text())
@@ -113,11 +145,35 @@ if args and args[0]=='app-server':
 else:
     endpoint=args[args.index('--remote')+1][7:]
     conn=socket.socket(socket.AF_UNIX);conn.connect(endpoint);handshake(conn,True)
-    def call(i,m,p):frame(conn,{'id':i,'method':m,'params':p},True);return receive(conn)
+    def call(i,m,p):
+        frame(conn,{'id':i,'method':m,'params':p},True)
+        while True:
+            response=receive(conn)
+            if response.get('method')=='item/commandExecution/requestApproval':
+                frame(conn,{'id':response['id'],'result':{'decision':'accept'}},True)
+            elif 'method' not in response and response.get('id')==i:
+                return response
     call(1,'initialize',{})
     # Native remote TUI does not forward developer_instructions CLI overrides.
     # Keep this boundary realistic: only backend configuration supplies defaults.
-    if args and args[0]=='resume':response=call(2,'thread/resume',{'threadId':args[1]})
+    if args and args[0]=='fork':
+        assert '--all' in args
+        print('Fixture native fork picker',flush=True)
+        call(2,'thread/list',{})
+        selected=sys.stdin.readline().strip()
+        if selected in ('','q'):sys.exit(0)
+        if Path('.fixture-picker-protocol').exists():
+            assert 'error' in call(9,'thread/start',{})
+        response=call(3,'thread/fork',{'threadId':selected,'cwd':'/wrong/source/workspace','developerInstructions':'Wrong source instructions','excludeTurns':True})
+        if 'error' in response:
+            print(response['error']['message'],flush=True)
+            sys.exit(0)
+        # The binding must already be durable before the native UI sees success.
+        with sqlite3.connect(Path(os.getcwd()).parents[1]/'.aide/state.sqlite') as db:
+            current=json.loads(db.execute('SELECT body FROM tasks WHERE id=?',(Path(os.getcwd()).name,)).fetchone()[0])
+        assert current['thread_id']==response['result']['thread']['id']
+        print('Fixture native selection pinned before reply',flush=True)
+    elif args and args[0]=='resume':response=call(2,'thread/resume',{'threadId':args[1]})
     else:response=call(2,'thread/start',{})
     print('Fixture Codex conversation ready',flush=True)
     # Ctrl-D/EOF returns to the real fish shell; normal commands are not run.

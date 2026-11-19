@@ -119,8 +119,9 @@ impl Runtime {
                 .as_ref()
                 .is_some_and(|p| Path::new(p).exists())
         {
-            let params = Instructions::read(&self.home, &task.key)?
+            let mut params = Instructions::read(&self.home, &task.key)?
                 .map_or_else(|| json!({"threadId":id}), |saved| saved.resume_params(id));
+            params["cwd"] = json!(task.workspace);
             rpc.call("thread/resume", params).await?;
             // Resume restores context only. Reconnect as a metadata observer;
             // native approvals continue to belong to the interactive client.
@@ -150,6 +151,10 @@ impl Runtime {
         }
     }
     async fn observe(&self, project: &Project, task: &Task, rpc: &mut Rpc) -> Result<()> {
+        // Explicit conversation selection and lifecycle operations own this lock.
+        let Ok(_transition) = project.task_lock(&task.id) else {
+            return Ok(());
+        };
         let current = project.task(&task.id)?;
         let thread = if let Some(id) = &current.thread_id {
             // Once bound, the database is authoritative. Other loaded threads,
@@ -203,7 +208,7 @@ impl Runtime {
         }
         Ok(())
     }
-    pub async fn resume(&self) -> Result<()> {
+    pub async fn resume(&self, options: crate::conversations::ResumeOptions) -> Result<()> {
         let (project, task) = self.current_task()?;
         if Rpc::connect(&self.socket(&task)).await.is_err() {
             http::request(
@@ -220,7 +225,25 @@ impl Runtime {
             .await
             .context("Backend unavailable; inspect the backend window")?;
         self.observe(&project, &task, &mut rpc).await?;
+        if options.pick {
+            drop(rpc);
+            return crate::native_picker::NativePicker::new(
+                self.clone(),
+                project.root.clone(),
+                task,
+            )
+            .run()
+            .await;
+        }
+        if let Some(source) = options.conversation {
+            self.fork_conversation(&project, &task, &mut rpc, &source)
+                .await?;
+        }
+        let _transition = project.task_lock(&task.id)?;
         let task = project.task(&task.id)?;
+        if task.lifecycle != Lifecycle::Open {
+            bail!("Task is no longer open");
+        }
         drop(rpc);
         // Replace only this foreground command. Exiting the native UI returns
         // to its parent fish shell; the independent tmux worker stays alive.
@@ -249,6 +272,8 @@ impl Runtime {
                 "--remote",
                 &format!("unix://{}", self.socket(&task).display()),
                 "--no-alt-screen",
+                "--cd",
+                &task.workspace,
             ])
             .current_dir(&task.workspace)
             .exec();
@@ -284,7 +309,7 @@ impl Runtime {
     }
 }
 
-fn is_user_conversation(thread: &serde_json::Value) -> bool {
+pub(crate) fn is_user_conversation(thread: &serde_json::Value) -> bool {
     // Modern servers also load internal threads (e.g. `thread_title`) with
     // the user's cwd and source. They must never participate in task binding.
     if !thread["threadSource"].is_null() {
@@ -294,36 +319,6 @@ fn is_user_conversation(thread: &serde_json::Value) -> bool {
     // while preserving discovery for ordinary legacy conversations.
     let source = &thread["source"];
     source.get("subAgent").is_none() && !source.as_str().is_some_and(|s| s.starts_with("subAgent"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn binding_excludes_internal_threads_and_supports_legacy_user_threads() {
-        for source in [
-            "thread_title",
-            "subagent",
-            "guardian_review",
-            "future_helper",
-        ] {
-            assert!(!is_user_conversation(
-                &json!({"source":"vscode", "threadSource":source})
-            ));
-        }
-        assert!(is_user_conversation(
-            &json!({"source":"vscode", "threadSource":"user"})
-        ));
-        assert!(is_user_conversation(
-            &json!({"source":"cli", "threadSource":null})
-        ));
-        assert!(is_user_conversation(&json!({})));
-        assert!(!is_user_conversation(
-            &json!({"source":{"subAgent":{"thread_spawn":{}}}})
-        ));
-        assert!(!is_user_conversation(&json!({"source":"subAgentReview"})));
-    }
 }
 
 async fn stop_backend(server: &mut tokio::process::Child) {
@@ -396,5 +391,35 @@ impl BackendLaunch<'_> {
         })
         .await
         .context("Codex configuration probe timed out")?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_excludes_internal_threads_and_supports_legacy_user_threads() {
+        for source in [
+            "thread_title",
+            "subagent",
+            "guardian_review",
+            "future_helper",
+        ] {
+            assert!(!is_user_conversation(
+                &json!({"source":"vscode", "threadSource":source})
+            ));
+        }
+        assert!(is_user_conversation(
+            &json!({"source":"vscode", "threadSource":"user"})
+        ));
+        assert!(is_user_conversation(
+            &json!({"source":"cli", "threadSource":null})
+        ));
+        assert!(is_user_conversation(&json!({})));
+        assert!(!is_user_conversation(
+            &json!({"source":{"subAgent":{"thread_spawn":{}}}})
+        ));
+        assert!(!is_user_conversation(&json!({"source":"subAgentReview"})));
     }
 }

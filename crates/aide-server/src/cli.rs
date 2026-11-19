@@ -86,7 +86,7 @@ enum Action {
 #[derive(Subcommand)]
 enum CodexAction {
     /// Reconnect in this task tmux session; restart a stopped backend if needed.
-    Resume,
+    Resume(crate::conversations::ResumeOptions),
 }
 #[derive(Subcommand)]
 pub(crate) enum TaskAction {
@@ -211,8 +211,8 @@ pub async fn run() -> Result<()> {
             environment,
         }) => runtime.worker(&project, &id, &environment).await,
         Some(Action::Codex {
-            command: CodexAction::Resume,
-        }) => runtime.resume().await,
+            command: CodexAction::Resume(options),
+        }) => runtime.resume(options).await,
         Some(Action::Doctor) => {
             for program in [
                 "codex",
@@ -499,5 +499,22 @@ mod tests {
         .unwrap();
         assert_eq!(remote.peer.as_deref(), Some("vm"));
         assert_eq!(remote.project.as_deref(), Some(Path::new("project")));
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+
+    #[test]
+    fn resume_accepts_explicit_history_selection_without_changing_plain_resume() {
+        for args in [
+            vec!["aide", "codex", "resume"],
+            vec!["aide", "codex", "resume", "--pick"],
+            vec!["aide", "codex", "resume", "previous-thread"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+        assert!(Cli::try_parse_from(["aide", "codex", "resume", "--pick", "id"]).is_err());
     }
 }
