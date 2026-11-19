@@ -14,7 +14,7 @@ function fixture(){
  return {dir,root,home,env,run};
 }
 async function manager(f){
- const child=spawn(binary,['--no-open'],{cwd:f.root,env:f.env,stdio:['ignore','pipe','pipe']});let log='';
+ const child=spawn(binary,['--no-open','--port','0'],{cwd:f.root,env:f.env,stdio:['ignore','pipe','pipe']});let log='';
  const url=await new Promise((resolve,reject)=>{
   const timer=setTimeout(()=>reject(new Error(log)),15000);
   child.stdout.on('data',s=>{log+=s;const m=log.match(/Aide: (http:\/\/127\.0\.0\.1:\d+)/);if(m){clearTimeout(timer);resolve(m[1]);}});
@@ -412,7 +412,7 @@ test('start submission closes the form; toasts expire, replace timers and distin
   await expect(page.getByLabel('Task ID')).toHaveCount(0);
   await expect(newTask).toHaveAttribute('aria-expanded','false');
   await expect.poll(()=>commands.length).toBe(1);
-  expect(commands[0]).toMatchObject({action:'start',id:'toast-task',repository:'repo',open_terminal:true});
+  expect(commands[0].command).toMatchObject({action:'start',id:'toast-task',repository:'repo',open_terminal:true});
   await expect(toast).toHaveText('Working…');
   await expect(toast).toHaveAttribute('data-kind','progress');
   const progressColour=await toast.evaluate(el=>getComputedStyle(el).borderLeftColor);
@@ -555,7 +555,9 @@ test('terminal windows reuse Alacritty, rediscover stale sockets, and fall back 
   await expect(page.getByRole('status')).toContainText('Opened terminal');
   expect(calls()).toHaveLength(1);
   const session=runtimeTools(f,'window-test').session;
-  const windowArgs=['--title','Aide · window-test','--working-directory',realpathSync(join(f.root,'repo-tasks','window-test')),'-e',realpathSync(execFileSync('which',['env'],{encoding:'utf8'}).trim()),'-u','TMUX','-u','TMUX_PANE',realpathSync(execFileSync('which',['tmux'],{encoding:'utf8'}).trim()),'-L',f.env.AIDE_TMUX_SOCKET,'attach-session','-t',session];
+  const address=JSON.parse(readFileSync(join(f.home,'manager.json'),'utf8'));
+  const identity=await (await fetch(`${server.url}/api/identity`,{headers:{Authorization:`Bearer ${address.token}`}})).json();
+  const windowArgs=['--title','Aide · window-test','--working-directory',realpathSync(join(f.root,'repo-tasks','window-test')),'-e',realpathSync(execFileSync('which',['env'],{encoding:'utf8'}).trim()),'-u','TMUX','-u','TMUX_PANE',`AIDE_TMUX_SOCKET=${f.env.AIDE_TMUX_SOCKET}`,realpathSync(binary),'--home',realpathSync(f.home),'attach-target','--instance',identity.instance,'--project',realpathSync(f.root),'--id','window-test','--key',session.slice('aide-'.length)];
   expect(calls()[0].args).toEqual(['msg','create-window',...windowArgs]);
 
   f.env.TMUX='inherited-client';f.env.TMUX_PANE='%999';f.env.ALACRITTY_SOCKET='/fixture/stale.sock';
@@ -631,7 +633,7 @@ test('terminal activity aggregates detached panes and ignores backend and Codex 
   const idleColor=await terminalBadge.evaluate(el=>getComputedStyle(el).color);
   expect(idleColor).not.toBe('rgb(35, 99, 43)');
   await expect(row.locator('.terminal-action .terminal-activity')).toHaveCount(0);
-  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toHaveAttribute('title','Open terminal');
+  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toHaveAttribute('title',/^Open terminal on /);
   const title=await page.title();
   expect(r.tmux('list-clients','-t',r.session)).toBe('');
   r.tmux('rename-window','-t',backend,'my renamed backend');
@@ -816,7 +818,7 @@ test('slow repository work leaves one dashboard responsive; shared repo and task
   await page.getByRole('button',{name:'New task'}).click();
   const start=async(id,repo)=>{
    if(!await page.getByLabel('Task ID').isVisible())await page.getByRole('button',{name:'New task'}).click();
-   await page.getByLabel('Task ID').fill(id);await page.getByRole('combobox').selectOption(repo);await page.getByRole('button',{name:'Start and open Codex'}).click();
+   await page.getByLabel('Task ID').fill(id);await page.getByRole('combobox',{name:/^Repository/}).selectOption(repo);await page.getByRole('button',{name:'Start and open Codex'}).click();
   };
   writeFileSync(join(gates,'repo.hold'),'hold');
   await start('slow-first','repo');await expect.poll(()=>existsSync(join(gates,'repo.entered'))).toBe(true);

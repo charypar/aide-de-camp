@@ -141,6 +141,7 @@ impl Section {
 pub fn Configuration(section: RwSignal<Section>) -> impl IntoView {
     let cx = expect_context::<Context>();
     let ui = cx.configuration;
+    let desktop = Memo::new(move |_| cx.local.get().is_some_and(|host| host.desktop));
     let filter = RwSignal::new(String::new());
     let line = RwSignal::new(1u32);
     let active = Memo::new(move |_| matches!(section.get(), Section::Configuration(_)));
@@ -215,11 +216,12 @@ pub fn Configuration(section: RwSignal<Section>) -> impl IntoView {
     view! {
         <section class="configuration" hidden=move || !active.get()>
             <div class="config-heading"><h1>"AI configuration"</h1><div class="actions">
-                <button on:click=open_folder disabled=move || !cx.connected.get() || !ui.listing.get().is_some_and(|l| l.exists)>"Open folder in Zed"</button>
+                <Show when=move || desktop.get()><button on:click=open_folder disabled=move || !cx.connected.get() || !ui.listing.get().is_some_and(|l| l.exists)>"Open folder in Zed"</button></Show>
                 <button on:click=refresh disabled=move || !cx.connected.get()>"Refresh"</button>
             </div></div>
             <p class="path">{move || ui.listing.get().map(|l| l.root).unwrap_or_default()}</p>
-            <p class="config-note">"Personal rules apply when a task first captures its instructions; existing snapshots stay unchanged. Skills and roles here are not automatically loaded by Aide. Edit or create files in Zed, then refresh."</p>
+            <p class="config-note">"Personal rules apply when a task first captures its instructions; existing snapshots stay unchanged. Skills and roles here are not automatically loaded by Aide."</p>
+            <p class="config-note">{move || if desktop.get() { "Edit or create files in Zed, then refresh." } else { "Edit files on this machine using SSH or your preferred remote editor, then refresh." }}</p>
             <p class="error" role="alert">{move || ui.list_error.get()}</p>
             <Show when=move || ui.listing.get().is_some_and(|l| !l.exists)><p>"The configuration folder does not exist yet. Create it at the path above in your external editor."</p></Show>
             <div class="config-layout">
@@ -235,7 +237,7 @@ pub fn Configuration(section: RwSignal<Section>) -> impl IntoView {
                 </aside>
                 <div class="config-viewer">
                     <div class="config-toolbar"><code>{move || selected.get()}</code><div class="actions">
-                        <button on:click=open_file disabled=move || selected.get().is_empty() || !cx.connected.get()>"Open in Zed"</button>
+                        <Show when=move || desktop.get()><button on:click=open_file disabled=move || selected.get().is_empty() || !cx.connected.get()>"Open in Zed"</button></Show>
                         <button on:click=copy_reference disabled=move || ui.listing.get().is_none()>{move || if selected.get().is_empty() { "Copy folder path" } else { "Copy reference" }}</button>
                     </div></div>
                     {move || match ui.document.get() {

@@ -123,7 +123,7 @@ def tool_called(command):
 def start_manager():
     global manager
     log = open(base / 'manager.log', 'a')
-    manager = subprocess.Popen([BINARY, '--no-open'], cwd=root, env=env, stdout=log, stderr=log)
+    manager = subprocess.Popen([BINARY, '--no-open', '--port', '0'], cwd=root, env=env, stdout=log, stderr=log)
     wait(lambda: (base / 'home/manager.json').exists())
 
 def stop_manager():

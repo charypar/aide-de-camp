@@ -84,6 +84,16 @@ build-aide-ui:
 aide: build
     target/debug/aide
 
+# Start Aide privately through the installed and enrolled Tailscale client.
+aide-tailnet: build-aide-ui
+    cargo run --locked -p aide-server -- --tailnet --no-open
+
+# Test shared operations, peer protocol, and dashboard remote-access behavior.
+test-aide-remotes: build-aide-ui
+    cargo test --locked -p aide-server -- --test-threads=1
+    cargo build --locked -p aide-server
+    npx playwright test tests/remotes.spec.js
+
 # Develop the dashboard UI with Trunk watching (run aide-dev-server separately).
 aide-dev-ui:
     cd crates/aide-ui && env -u NO_COLOR trunk watch --locked

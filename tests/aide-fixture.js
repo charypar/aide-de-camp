@@ -13,7 +13,7 @@ export function fixture(){
  return {dir,root,home,env,run};
 }
 export async function manager(f){
- const child=spawn(binary,['--no-open'],{cwd:f.root,env:f.env,stdio:['ignore','pipe','pipe']});let log='';
+ const child=spawn(binary,['--no-open','--port','0'],{cwd:f.root,env:f.env,stdio:['ignore','pipe','pipe']});let log='';
  const url=await new Promise((resolve,reject)=>{
   const timer=setTimeout(()=>reject(new Error(log)),15000);
   child.stdout.on('data',s=>{log+=s;const m=log.match(/Aide: (http:\/\/127\.0\.0\.1:\d+)/);if(m){clearTimeout(timer);resolve(m[1]);}});

@@ -2,6 +2,8 @@
 
 Milestone 1 is implemented: workspace management, native attachable Codex sessions, monitoring/recovery, recordings, dashboard, and review launch integration. Milestone 2 remains open for experience with this version. The companion [review plan](REVIEW_PLAN.md) defines an independently usable tool.
 
+**Multi-machine direction — agreed 2026-11-17:** the [remote operation plan](REMOTES_PLAN.md) defines a separate implementation slice: independent host services, a local dashboard/CLI aggregating discovered peers, Tailscale Serve, and local terminal launches over SSH. Local and remote control share task operations and retry/reconciliation behavior. This supersedes the exploratory telemetry-only dashboard-link approach; it does not define the broader milestone 2. Implementation has passed controlled verification and live Mac/Linux Tailscale, SSH/tmux, and reboot-recovery acceptance (2026-11-19). See the [setup guide](../docs/REMOTES.md).
+
 **Naming:** Aide de camp in full, Aide for short, `aide` for the CLI. Keep `~/.aide` and project-local `.aide/` paths.
 
 **Review commands — milestone 1:** rename the independent review executable to `aide-review`. `aide review` delegates to it for the current repository, without requiring a registered project or running dashboard. `aide task review <task-id>` resolves the task's workspace from project bookkeeping and launches the same review tool there; the dashboard's review action uses this operation. Preserve the review tool's arguments and normal start/resume behaviour. This integration only locates and launches the reviewer: it neither completes the task nor automatically submits feedback to its Codex conversation. All three command entry points are implemented.

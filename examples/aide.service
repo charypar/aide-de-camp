@@ -1,0 +1,15 @@
+[Unit]
+Description=Aide task dashboard and peer API
+After=network-online.target
+
+[Service]
+ExecStart=%h/.cargo/bin/aide --port 49173 --tailnet --no-open
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=AIDE_DESKTOP=0
+Restart=on-failure
+RestartSec=10
+# Task tmux/Codex processes outlive dashboard restarts.
+KillMode=process
+
+[Install]
+WantedBy=default.target

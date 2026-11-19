@@ -231,3 +231,21 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .config-layout { grid-template-columns: minmax(0, 1fr); }
   .config-files { max-height: 200px; }
 }
+
+/* The gateway and its peers share one compact header, with settings last. */
+.topbar { height: auto; min-height: 60px; padding-top: 10px; padding-bottom: 10px; }
+.brand { flex-shrink: 0; }
+.header-controls { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-width: 0; }
+.machines { margin: 0; gap: 6px; justify-content: flex-end; }
+.machine { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; border-color: transparent; }
+.machine[aria-pressed=true] { background: #e8efff; border-color: var(--accent); }
+.machine-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machine-counts { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.connection-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: #27834b; }
+.machine.offline .connection-dot { background: #ad710c; }
+.header-controls > .configuration-link { display: flex; align-items: center; flex-shrink: 0; padding: 7px; color: var(--muted); border-radius: 7px; }
+.header-controls > .configuration-link:hover, .header-controls > .configuration-link[aria-current=page] { background: var(--hover); color: var(--accent); }
+@media (max-width: 800px) {
+  .topbar { flex-wrap: wrap; }
+  .header-controls { margin-left: auto; }
+}

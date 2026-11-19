@@ -16,12 +16,21 @@ use std::{
 #[derive(Parser)]
 #[command(version, about = "Aide de camp — task workspaces and conversations")]
 struct Cli {
+    #[arg(long, global = true)]
+    peer: Option<String>,
+    #[arg(long, global = true)]
+    project: Option<PathBuf>,
+    #[arg(long, global = true, conflicts_with = "peer")]
+    all_peers: bool,
     #[arg(long, global = true, help = "Personal data directory (also AIDE_HOME)")]
     home: Option<PathBuf>,
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 49173)]
     port: u16,
     #[arg(long)]
     no_open: bool,
+    /// Use a preconfigured private Tailscale Serve route and discover peers.
+    #[arg(long)]
+    tailnet: bool,
     #[arg(long)]
     assets: Option<PathBuf>,
     #[command(subcommand)]
@@ -29,6 +38,21 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    Peer {
+        #[command(subcommand)]
+        command: PeerAction,
+    },
+    #[command(hide = true)]
+    AttachTarget {
+        #[arg(long)]
+        project: PathBuf,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        instance: String,
+    },
     Init {
         #[arg(default_value = ".")]
         path: PathBuf,
@@ -65,7 +89,7 @@ enum CodexAction {
     Resume,
 }
 #[derive(Subcommand)]
-enum TaskAction {
+pub(crate) enum TaskAction {
     /// Link and inspect GitHub pull requests (uses the running dashboard).
     Pr {
         id: String,
@@ -115,16 +139,24 @@ enum TaskAction {
 }
 
 #[derive(Subcommand)]
-enum PrAction {
+pub(crate) enum PrAction {
     Link { url: String },
     Unlink { url: String },
     List,
     Refresh,
 }
 
+#[derive(Subcommand)]
+enum PeerAction {
+    List,
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     if let Some(Action::Review { args }) = &cli.command {
+        if cli.peer.is_some() || cli.all_peers {
+            bail!("Remote guided review is not available yet");
+        }
         return review(&std::env::current_dir()?, args);
     }
     let home_path = if matches!(&cli.command, Some(Action::Codex { .. })) && cli.home.is_none() {
@@ -133,9 +165,41 @@ pub async fn run() -> Result<()> {
         cli.home
     };
     let home = Home::new(home_path)?;
+    if cli.peer.is_some() || cli.all_peers {
+        let Some(Action::Task { command }) = cli.command else {
+            bail!("Use --peer with a task command");
+        };
+        return crate::remote_cli::run(
+            &home,
+            cli.peer.as_deref(),
+            cli.project.as_deref().and_then(Path::to_str),
+            command,
+        )
+        .await;
+    }
     let runtime = Runtime::new(&home);
     match cli.command {
-        None => http::serve(home, cli.port, cli.no_open, cli.assets).await,
+        Some(Action::Peer {
+            command: PeerAction::List,
+        }) => crate::remote_cli::list(&home).await,
+        Some(Action::AttachTarget {
+            project,
+            id,
+            key,
+            instance,
+        }) => {
+            if home.instance_id()? != instance {
+                bail!("Aide host identity changed");
+            }
+            let mut project = Project::open(&project)?;
+            let task = project.task(&id)?;
+            if task.key != key {
+                bail!("Task identity changed; refresh task list");
+            }
+            runtime.recover(&mut project, &task).await?;
+            runtime.attach(&project, &task, false)
+        }
+        None => http::serve(home, cli.port, cli.no_open, cli.assets, cli.tailnet).await,
         Some(Action::Init { path, repo }) => {
             workspace::initialize(&home, &path, &repo)?;
             println!("Registered {}", path.canonicalize()?.display());
@@ -161,7 +225,7 @@ pub async fn run() -> Result<()> {
                 "gh",
             ] {
                 let output = std::process::Command::new(program)
-                    .arg("--version")
+                    .arg(if program == "tmux" { "-V" } else { "--version" })
                     .output();
                 println!(
                     "{program}: {}",
@@ -179,7 +243,10 @@ pub async fn run() -> Result<()> {
             if matches!(command, TaskAction::Detach) {
                 return runtime.detach();
             }
-            let mut project = Project::discover(&std::env::current_dir()?)?;
+            let mut project = match &cli.project {
+                Some(root) => Project::open(Path::new(root))?,
+                None => Project::discover(&std::env::current_dir()?)?,
+            };
             let root = project.root.display().to_string();
             match command {
                 TaskAction::Pr { id, command } => {
@@ -285,17 +352,7 @@ pub async fn run() -> Result<()> {
                 }
                 TaskAction::Attach { id, new_window } => {
                     let task = project.task(&id)?;
-                    if !runtime.healthy(&task).await {
-                        http::request(
-                            &home,
-                            Command::Recover {
-                                project: root,
-                                id,
-                                environment: Some(crate::terminal::environment()?),
-                            },
-                        )
-                        .await?;
-                    }
+                    runtime.recover(&mut project, &task).await?;
                     runtime.attach(&project, &task, new_window)?;
                 }
                 TaskAction::Recover { id } => {
@@ -304,7 +361,7 @@ pub async fn run() -> Result<()> {
                         Command::Recover {
                             project: root,
                             id,
-                            environment: Some(crate::terminal::environment()?),
+                            environment: None,
                         },
                     )
                     .await?
@@ -384,4 +441,63 @@ fn review(directory: &Path, args: &[String]) -> Result<()> {
         .stderr(Stdio::inherit())
         .exec();
     Err(error.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn dashboard_defaults_to_stable_port_with_ephemeral_override() {
+        assert_eq!(Cli::try_parse_from(["aide"]).unwrap().port, 49173);
+        assert_eq!(
+            Cli::try_parse_from(["aide", "--port", "0"]).unwrap().port,
+            0
+        );
+    }
+
+    #[test]
+    fn project_selector_remains_compatible_with_worker_and_attachment_commands() {
+        let worker = Cli::try_parse_from([
+            "aide",
+            "internal-worker",
+            "--project",
+            "/tmp/project",
+            "--id",
+            "task",
+            "--environment",
+            "/tmp/env",
+        ])
+        .unwrap();
+        assert!(
+            matches!(worker.command, Some(Action::InternalWorker { project, .. }) if project == Path::new("/tmp/project"))
+        );
+        let attach = Cli::try_parse_from([
+            "aide",
+            "attach-target",
+            "--project",
+            "/tmp/project",
+            "--id",
+            "task",
+            "--key",
+            "key",
+            "--instance",
+            "host",
+        ])
+        .unwrap();
+        assert!(
+            matches!(attach.command, Some(Action::AttachTarget { project, .. }) if project == Path::new("/tmp/project"))
+        );
+        let remote = Cli::try_parse_from([
+            "aide",
+            "task",
+            "list",
+            "--peer",
+            "vm",
+            "--project",
+            "project",
+        ])
+        .unwrap();
+        assert_eq!(remote.peer.as_deref(), Some("vm"));
+        assert_eq!(remote.project.as_deref(), Some(Path::new("project")));
+    }
 }

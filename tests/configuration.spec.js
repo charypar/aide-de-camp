@@ -25,7 +25,7 @@ test.afterEach(async () => {if(server) await stop(server); if(f) cleanup(f);});
 
 async function config(page) {
   await page.goto(server.url);
-  await expect(page.getByText('Connected', {exact:true})).toBeVisible();
+  await expect(page.locator('[data-machine=local]')).toHaveAttribute('title', /Connected/);
   await page.getByRole('link', {name:'AI configuration', exact:true}).click();
   await expect(page.getByRole('link', {name:'methodology.md', exact:true})).toBeVisible();
 }
@@ -177,4 +177,53 @@ test('configuration cog is keyboard accessible and long source lines wrap withou
     await page.getByRole('button', {name:'Copy reference', exact:true}).click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${root}/methodology.md:2`);
   }
+});
+
+test('headless configuration keeps browsing and copying without desktop actions', async ({page, context}) => {
+  await stop(server);
+  f.env.AIDE_DESKTOP = '0';
+  server = await manager(f);
+  await context.grantPermissions(['clipboard-read','clipboard-write']);
+  await config(page);
+  await expect(page.getByRole('button', {name:/Zed/})).toHaveCount(0);
+  await expect(page.getByText('Edit files on this machine using SSH or your preferred remote editor, then refresh.', {exact:true})).toBeVisible();
+  await page.getByRole('button', {name:'Copy folder path',exact:true}).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(root);
+  await page.getByRole('link', {name:'methodology.md',exact:true}).click();
+  await expect(page.getByLabel('File contents')).toContainText('Use meaningful tests.');
+  await page.getByRole('button', {name:'Select line 2',exact:true}).click();
+  await page.getByRole('button', {name:'Copy reference',exact:true}).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${root}/methodology.md:2`);
+  writeFileSync(join(root,'methodology.md'), 'Updated remotely');
+  await page.getByRole('button', {name:'Refresh',exact:true}).click();
+  await expect(page.getByLabel('File contents')).toContainText('Updated remotely');
+  await page.reload();
+  await expect(page.getByLabel('File contents')).toContainText('Updated remotely');
+  await expect(page.getByRole('button', {name:/Zed/})).toHaveCount(0);
+});
+
+test('headless API rejects file and folder editor launches with correlated errors', async ({page}) => {
+  await stop(server);
+  f.env.AIDE_DESKTOP = '0';
+  server = await manager(f);
+  await config(page);
+  const results = await page.evaluate(async () => {
+    const ws = new WebSocket(`ws://${location.host}/ws`);
+    await new Promise(resolve => ws.addEventListener('open',resolve,{once:true}));
+    return new Promise(resolve => {
+      const results = {};
+      ws.onmessage = event => {
+        const value = JSON.parse(event.data);
+        if (value.type !== 'configuration') return;
+        results[value.request_id] = value.result;
+        if (Object.keys(results).length === 2) {ws.close();resolve(results);}
+      };
+      for (const [id,path] of [['folder',null],['file','methodology.md']]) {
+        ws.send(JSON.stringify({action:'configuration',request_id:id,operation:{operation:'open',path,line:2}}));
+      }
+    });
+  });
+  expect(results.folder.Err).toContain('cannot launch desktop applications');
+  expect(results.file.Err).toContain('cannot launch desktop applications');
+  expect(existsSync(launchLog)).toBe(false);
 });

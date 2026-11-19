@@ -70,7 +70,7 @@ impl Terminal {
     fn window_command(&self, reuse: bool) -> Result<Command> {
         // A Dock-launched instance may not have Homebrew on its PATH. Resolve
         // the attachment tools here, where the task's tmux commands already work.
-        let tmux = executable("tmux")?;
+        let aide = std::env::current_exe()?;
         let env = executable("env")?;
         let mut command = Command::new("alacritty");
         command.env_remove("TMUX").env_remove("TMUX_PANE");
@@ -92,11 +92,16 @@ impl Terminal {
             "-u",
             "TMUX_PANE",
         ]);
-        command.arg(tmux);
         if let Some(socket) = std::env::var_os("AIDE_TMUX_SOCKET") {
-            command.arg("-L").arg(socket);
+            command.arg(format!("AIDE_TMUX_SOCKET={}", socket.to_string_lossy()));
         }
-        command.args(["attach-session", "-t", &self.task.session()]);
+        let home = crate::database::Home::new(Some(self.home.clone()))?;
+        command.arg(aide).args(crate::attachment::arguments(
+            &self.home.display().to_string(),
+            &home.instance_id()?,
+            &self.root.display().to_string(),
+            &self.task,
+        ));
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -350,7 +355,7 @@ impl Terminal {
     }
 }
 
-fn executable(name: &str) -> Result<PathBuf> {
+pub(crate) fn executable(name: &str) -> Result<PathBuf> {
     let path = std::env::var_os("PATH").context("PATH is not set")?;
     std::env::split_paths(&path)
         .map(|directory| directory.join(name))

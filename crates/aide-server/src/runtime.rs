@@ -42,11 +42,6 @@ impl Runtime {
     fn tmux(&self, args: &[&str]) -> Result<String> {
         crate::terminal::Terminal::run(args)
     }
-    pub async fn healthy(&self, task: &Task) -> bool {
-        self.alive(task)
-            && crate::terminal::Terminal::work_alive(task).unwrap_or(false)
-            && Rpc::connect(&self.socket(task)).await.is_ok()
-    }
     pub async fn ensure(&self, project: &mut Project, task: &Task, recovered: bool) -> Result<()> {
         self.repair(project, task, recovered, None).await
     }

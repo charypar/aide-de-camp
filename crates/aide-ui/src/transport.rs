@@ -1,7 +1,11 @@
 use crate::github::TaskUi;
 use aide_core::{Command, Event, ProjectView};
 use leptos::prelude::*;
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::WebSocket;
 
@@ -25,6 +29,8 @@ impl NoticeKind {
 #[derive(Clone, Copy)]
 pub struct Context {
     pub configuration: crate::configuration::ConfigUi,
+    pub local: RwSignal<Option<aide_core::peer::Identity>>,
+    pub hosts: RwSignal<Vec<aide_core::peer::HostView>>,
     pub projects: RwSignal<Vec<ProjectView>>,
     pub connected: RwSignal<bool>,
     pub message: RwSignal<String>,
@@ -33,12 +39,15 @@ pub struct Context {
     pub task_ui: RwSignal<BTreeMap<String, TaskUi>>,
     owner: StoredValue<Owner>,
     sequence: RwSignal<u64>,
+    pending: RwSignal<BTreeSet<String>>,
     socket: StoredValue<Rc<RefCell<Option<WebSocket>>>, LocalStorage>,
 }
 impl Context {
     pub fn new() -> Self {
         Self {
             configuration: crate::configuration::ConfigUi::new(),
+            local: RwSignal::new(None),
+            hosts: RwSignal::new(vec![]),
             projects: RwSignal::new(vec![]),
             connected: RwSignal::new(false),
             message: RwSignal::new(String::new()),
@@ -47,6 +56,7 @@ impl Context {
             task_ui: RwSignal::new(BTreeMap::new()),
             owner: StoredValue::new(Owner::current().expect("App owner")),
             sequence: RwSignal::new(0),
+            pending: RwSignal::new(BTreeSet::new()),
             socket: StoredValue::new_local(Rc::new(RefCell::new(None))),
         }
     }
@@ -83,12 +93,18 @@ impl Context {
                 | Command::UnlinkPr { .. }
                 | Command::RefreshPrs { .. }
         );
+        let request_id = self.next_request();
         self.socket.with_value(|socket| {
+            let wire = if correlated_command {
+                serde_json::to_string(&command).unwrap()
+            } else {
+                serde_json::json!({"request_id": request_id, "command": command}).to_string()
+            };
             let result = socket
                 .borrow()
                 .as_ref()
                 .filter(|s| s.ready_state() == WebSocket::OPEN)
-                .map(|s| s.send_with_str(&serde_json::to_string(&command).unwrap()));
+                .map(|s| s.send_with_str(&wire));
             if !matches!(result, Some(Ok(()))) {
                 self.notify(
                     "Dashboard disconnected. Reconnect before trying again.".into(),
@@ -98,14 +114,42 @@ impl Context {
             } else {
                 if !correlated_command {
                     self.notify("Working…".into(), NoticeKind::Progress);
+                    self.pending.update(|pending| {
+                        pending.insert(request_id.clone());
+                    });
+                    let request_id = request_id.clone();
+                    gloo_timers::callback::Timeout::new(60_000, move || {
+                        let mut expired = false;
+                        self.pending
+                            .update(|pending| expired = pending.remove(&request_id));
+                        if expired {
+                            self.notify(
+                                "No response. Check the refreshed task status before retrying."
+                                    .into(),
+                                NoticeKind::Error,
+                            );
+                        }
+                    })
+                    .forget();
                 }
                 true
             }
         })
     }
     pub fn connect(self) {
-        let host = web_sys::window().unwrap().location().host().unwrap();
-        let ws = WebSocket::new(&format!("ws://{host}/ws")).unwrap();
+        let location = web_sys::window().unwrap().location();
+        let host = location.host().unwrap();
+        let scheme = if location.protocol().unwrap() == "https:" {
+            "wss"
+        } else {
+            "ws"
+        };
+        let prefix = if location.pathname().unwrap().starts_with("/aide/") {
+            "/aide"
+        } else {
+            ""
+        };
+        let ws = WebSocket::new(&format!("{scheme}://{host}{prefix}/ws")).unwrap();
         self.socket
             .with_value(|s| *s.borrow_mut() = Some(ws.clone()));
         let open = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| self.connected.set(true));
@@ -119,6 +163,10 @@ impl Context {
                     match event {
                         Event::Configuration { request_id, result } => {
                             self.configuration.receive(self, request_id, result)
+                        }
+                        Event::Hosts { local, hosts } => {
+                            self.local.set(Some(local));
+                            self.hosts.set(hosts);
                         }
                         Event::Snapshot { projects } => self.projects.set(projects),
                         Event::PrResult {
@@ -138,6 +186,23 @@ impl Context {
                                 }
                             }
                         }
+                        Event::ActionResult {
+                            request_id,
+                            message,
+                            error,
+                        } => {
+                            self.pending.update(|pending| {
+                                pending.remove(&request_id);
+                            });
+                            self.notify(
+                                message,
+                                if error {
+                                    NoticeKind::Error
+                                } else {
+                                    NoticeKind::Success
+                                },
+                            );
+                        }
                         Event::Result { message, error } => {
                             let kind = if error {
                                 NoticeKind::Error
@@ -154,6 +219,9 @@ impl Context {
         message.forget();
         let close = Closure::<dyn FnMut(web_sys::CloseEvent)>::new(move |_| {
             self.connected.set(false);
+            self.pending.set(BTreeSet::new());
+            self.projects.set(vec![]);
+            // Retain names for disconnected indicators; task data is cleared above.
             for ui in self.task_ui.get_untracked().values() {
                 if !ui.request.get_untracked().is_empty() {
                     ui.request.set(String::new());

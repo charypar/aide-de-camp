@@ -1,6 +1,7 @@
 pub mod configuration;
 pub use configuration::*;
 pub mod github;
+pub mod peer;
 pub use github::*;
 
 use serde::{Deserialize, Serialize};
@@ -82,6 +83,8 @@ pub struct TaskView {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ProjectView {
+    #[serde(default)]
+    pub source: Option<peer::Source>,
     pub root: String,
     pub name: String,
     pub repositories: Vec<Repository>,
@@ -156,6 +159,15 @@ pub enum Event {
     Configuration {
         request_id: String,
         result: Result<ConfigData, String>,
+    },
+    ActionResult {
+        request_id: String,
+        message: String,
+        error: bool,
+    },
+    Hosts {
+        local: peer::Identity,
+        hosts: Vec<peer::HostView>,
     },
     PrResult {
         request_id: String,

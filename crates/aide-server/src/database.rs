@@ -56,12 +56,15 @@ impl Home {
         let home = Self {
             path: path.canonicalize()?,
         };
+        fs::create_dir_all(home.path.join("run"))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&home.path, fs::Permissions::from_mode(0o700))?;
+            // Codex validates the socket's immediate parent, even when the
+            // enclosing Aide home is private. Repair older installations too.
+            fs::set_permissions(home.path.join("run"), fs::Permissions::from_mode(0o700))?;
         }
-        fs::create_dir_all(home.path.join("run"))?;
         fs::create_dir_all(home.path.join("recordings"))?;
         home.registry()?
             .execute_batch("CREATE TABLE IF NOT EXISTS projects(root TEXT PRIMARY KEY)")?;
@@ -78,6 +81,19 @@ impl Home {
             [root.to_string_lossy()],
         )?;
         Ok(())
+    }
+    pub fn instance_id(&self) -> Result<String> {
+        let db = self.registry()?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS instance(singleton INTEGER PRIMARY KEY CHECK(singleton=1), id TEXT NOT NULL)")?;
+        db.execute(
+            "INSERT OR IGNORE INTO instance VALUES(1, ?)",
+            [uuid::Uuid::new_v4().to_string()],
+        )?;
+        Ok(
+            db.query_row("SELECT id FROM instance WHERE singleton=1", [], |row| {
+                row.get(0)
+            })?,
+        )
     }
     pub fn roots(&self) -> Result<Vec<String>> {
         Ok(self
@@ -451,6 +467,25 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_socket_directory_is_private_on_creation_and_reopen() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("home");
+        let home = Home::new(Some(path.clone()))?;
+        let runtime = home.path.join("run");
+        assert_eq!(fs::metadata(&runtime)?.permissions().mode() & 0o777, 0o700);
+        fs::write(runtime.join("existing.log"), "preserve")?;
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o775))?;
+        Home::new(Some(path))?;
+        assert_eq!(fs::metadata(&runtime)?.permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            fs::read_to_string(runtime.join("existing.log"))?,
+            "preserve"
+        );
+        Ok(())
+    }
     use aide_core::Lifecycle;
 
     #[test]

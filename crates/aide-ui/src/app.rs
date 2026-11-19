@@ -8,6 +8,7 @@ pub fn App() -> impl IntoView {
     provide_context(cx);
     cx.connect();
     let section = crate::configuration::Section::signal();
+    let machine = RwSignal::new(String::new());
     Effect::new(move |_| {
         let projects = cx.projects.get();
         let mut attention = 0;
@@ -32,37 +33,31 @@ pub fn App() -> impl IntoView {
         }
     });
     view! {
-        <header class="topbar"><div class="brand"><strong>"Aide de camp"</strong>
-            <nav class="section-nav" aria-label="Sections">
-                <a href="#/tasks" aria-current=move || if section.get() == crate::configuration::Section::Tasks { Some("page") } else { None }>"Tasks"</a>
-                <a class="configuration-link" href="#/configuration" aria-label="AI configuration" title="AI configuration" aria-current=move || if matches!(section.get(), crate::configuration::Section::Configuration(_)) { Some("page") } else { None }>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true" focusable="false">
-                        <polygon points="21.45,11.07 21.45,12.93 19.08,14.15 18.53,15.49 19.34,18.03 18.03,19.34 15.49,18.53 14.15,19.08 12.93,21.45 11.07,21.45 9.85,19.08 8.51,18.53 5.97,19.34 4.66,18.03 5.47,15.49 4.92,14.15 2.55,12.93 2.55,11.07 4.92,9.85 5.47,8.51 4.66,5.97 5.97,4.66 8.51,5.47 9.85,4.92 11.07,2.55 12.93,2.55 14.15,4.92 15.49,5.47 18.03,4.66 19.34,5.97 18.53,8.51 19.08,9.85"/>
-                        <circle cx="12" cy="12" r="3"/>
-                    </svg>
-                </a>
-            </nav></div>
-            <span class="connection" class:offline=move || !cx.connected.get()>{move || if cx.connected.get() { "Connected" } else { "Reconnecting…" }}</span>
-        </header>
+        <crate::header::Header section=section machine=machine/>
         <main>
             <p class="notice" data-kind=move || cx.notice_kind.get().as_str() role="status" aria-atomic="true">{move || cx.message.get()}</p>
-            <div hidden=move || section.get() != crate::configuration::Section::Tasks><Tasks/></div>
+            <div hidden=move || section.get() != crate::configuration::Section::Tasks><Tasks machine=machine/></div>
             <crate::configuration::Configuration section=section/>
         </main>
     }
 }
 
 #[component]
-fn Tasks() -> impl IntoView {
+fn Tasks(machine: RwSignal<String>) -> impl IntoView {
     let cx = expect_context::<Context>();
     let focus = RwSignal::new(String::new());
     let completed = RwSignal::new(false);
+    Effect::new(move |_| {
+        machine.get();
+        focus.set(String::new());
+    });
     let show_all = move |_| focus.set(String::new());
     let toggle_history = move |_| completed.update(|v| *v = !*v);
     view! {
-            <nav aria-label="Project navigation"><button class="project-filter" aria-pressed=move || focus.get().is_empty().to_string() on:click=show_all>"All projects"</button><label class="history"><input type="checkbox" on:change=toggle_history prop:checked=move || completed.get()/>"Show completed"</label></nav>
-            <Show when=move || cx.projects.get().is_empty()><section class="empty"><h1>"Make room for your next task"</h1><p>"Register a project from your terminal:"</p><code>"aide init . --repo ./repository"</code></section></Show>
-            <For each={move || cx.projects.get().into_iter().filter(|p| focus.get().is_empty() || focus.get() == p.root).map(|p| p.root).collect::<Vec<_>>()} key=|root| root.clone() children={move |root| view! { <Project root=root focus=focus completed=completed/> }}/>
+        <nav aria-label="Project navigation"><button class="project-filter" aria-pressed=move || focus.get().is_empty().to_string() on:click=show_all>"All projects"</button><label class="history"><input type="checkbox" on:change=toggle_history prop:checked=move || completed.get()/>"Show completed"</label></nav>
+        {move || cx.hosts.get().into_iter().filter(|host| host.error.is_some()).map(|host| view! { <p class="error">{format!("{}: {} — overview incomplete", host.identity.name, host.error.unwrap_or_default())}</p> }).collect_view()}
+        <Show when=move || cx.connected.get() && cx.projects.get().is_empty()><section class="empty"><h1>"Make room for your next task"</h1><p>"Register a project from your terminal:"</p><code>"aide init . --repo ./repository"</code></section></Show>
+        <For each={move || cx.projects.get().into_iter().filter(|p| (focus.get().is_empty() || focus.get() == p.root) && (machine.get().is_empty() || p.source.as_ref().map(|source| source.instance.clone()).unwrap_or_else(|| "local".into()) == machine.get())).map(|p| p.root).collect::<Vec<_>>()} key=|root| root.clone() children={move |root| view! { <Project root=root focus=focus completed=completed/> }}/>
     }
 }
 
@@ -100,7 +95,7 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
             project: root.get_value(),
             id: id.get().trim().into(),
             repository: if repo.is_empty() { None } else { Some(repo) },
-            open_terminal: true,
+            open_terminal: cx.local.get_untracked().is_some_and(|host| host.desktop),
         }) {
             creating.set(false);
         }
@@ -108,7 +103,7 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
     view! {
         <section class="project">
             <div class="project-heading"><button class="project-name" on:click=focus_project>{move || project.get().map(|p| p.name).unwrap_or_default()}</button><button class="primary" on:click=toggle_create aria-expanded=move || creating.get().to_string() disabled=move || !cx.connected.get()>"New task"</button></div>
-            <p class="path">{root.get_value()}</p>
+            <p class="path">{move || project.get().map(|p| p.source.map(|source| source.root).unwrap_or(p.root))}</p>
             <Show when=move || creating.get()><form class="create" on:submit=start_task>
                 <label>"Task ID"<input required pattern=r"[A-Za-z0-9][A-Za-z0-9_\-]{0,79}" placeholder="task-1234" on:input=change_id prop:value=move || id.get()/></label>
                 <label>"Repository"<select required on:change=change_repository>
@@ -118,7 +113,7 @@ fn Project(root: String, focus: RwSignal<String>, completed: RwSignal<bool>) -> 
                         view! { <option value=r.name.clone() prop:selected=move || selected_repository.get() == name>{r.name.clone()}</option> }
                     }).collect_view())}
                 </select></label>
-                <button class="primary" type="submit" disabled=move || !cx.connected.get() || selected_repository.get().is_empty()>"Start and open Codex"</button>
+                <button class="primary" type="submit" disabled=move || !cx.connected.get() || selected_repository.get().is_empty()>{move || if cx.local.get().is_some_and(|host| host.desktop) { "Start and open Codex" } else { "Start task" }}</button>
             </form></Show>
             <p class="error">{move || project.get().and_then(|p| p.error)}</p>
             { [Status::Attention, Status::Waiting, Status::Working, Status::Starting, Status::Closing, Status::Parked, Status::Completed].into_iter().map(move |status| {
@@ -201,8 +196,15 @@ fn Task(root: String, id: String) -> impl IntoView {
                 String::new()
             };
             let message = format!(
-                "Close {} and delete its workspace?{}\n{}\nHistory and recordings will be retained.",
+                "Close {} on {} and delete its workspace?{}\n{}\nHistory and recordings will be retained.",
                 id.get_value(),
+                cx.projects
+                    .get_untracked()
+                    .into_iter()
+                    .find(|p| p.root == root.get_value())
+                    .and_then(|p| p.source.map(|source| source.name))
+                    .or_else(|| cx.local.get_untracked().map(|host| host.name))
+                    .unwrap_or_default(),
                 warning,
                 task.task.workspace
             );
@@ -256,7 +258,7 @@ fn Task(root: String, id: String) -> impl IntoView {
                 </span></Show>
             </button>
                 <crate::github::PrTags task=task/>
-                <Show when=is_open><button class="terminal-action" aria-label="Open terminal" title="Open terminal" on:click=attach disabled=move || !cx.connected.get()>
+                <Show when=move || is_open() && cx.local.get().is_some_and(|host| host.desktop)><button class="terminal-action" aria-label="Open terminal" title=move || format!("Open terminal on {}", cx.local.get().map(|host| host.name).unwrap_or_default()) on:click=attach disabled=move || !cx.connected.get()>
                     <span class="terminal-label">"Open terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span>
                 </button></Show>
             </div>
@@ -272,7 +274,7 @@ fn Task(root: String, id: String) -> impl IntoView {
                         Some(TerminalActivity::Working) => "Terminal working — commands are running in one or more panes outside Codex.",
                         None => "Terminal activity unavailable — the session is absent or process inspection did not succeed.",
                     }}</p></Show>
-                    <Show when=is_open><div class="actions"><button on:click=editor>"Open Zed"</button><button on:click=review>"Review"</button><button on:click=recover>"Recover session"</button>
+                    <Show when=is_open><div class="actions"><Show when=move || !root.get_value().starts_with("peer:") && cx.local.get().is_some_and(|host| host.desktop)><button on:click=editor>"Open Zed"</button><button on:click=review>"Review"</button></Show><button on:click=recover>"Recover session"</button>
                         <Show when=move || task.get().is_some_and(|t| matches!(t.status, Status::Waiting | Status::Working | Status::Attention | Status::Parked))>
                             <button on:click=toggle_parking disabled=move || !cx.connected.get() title="Set aside while waiting externally. Opening Terminal, Zed or Review, or newly requiring attention, unparks it.">{move || if task.get().is_some_and(|t| t.status == Status::Parked) { "Unpark task" } else { "Park task" }}</button>
                         </Show>

@@ -122,11 +122,20 @@ fn prepare(
         _ => bail!("Choose a repository with --repo"),
     };
     let existing = project.tasks()?.into_iter().find(|t| t.id == id);
-    if existing
-        .as_ref()
-        .is_some_and(|t| t.lifecycle != Lifecycle::Preparing)
-    {
-        bail!("Task ID already exists (including completed history)");
+    if let Some(task) = &existing {
+        if task.repository != repo.name {
+            bail!("Retry using the original repository");
+        }
+        match task.lifecycle {
+            Lifecycle::Open => {
+                verify_workspace(task)?;
+                return Ok(task.clone());
+            }
+            Lifecycle::Preparing => {}
+            Lifecycle::Closing | Lifecycle::Completed => {
+                bail!("Task is closing or completed; use a new task ID");
+            }
+        }
     }
     let checkout = Path::new(&repo.checkout);
     let _repository = repository_lock(checkout)?;
@@ -346,7 +355,7 @@ pub(crate) mod tests {
         let nested = Path::new(&task.workspace).join("nested");
         fs::create_dir(&nested)?;
         assert_eq!(Project::discover(&nested)?.root, project.root);
-        assert!(start(&project, "task-1", None).is_err());
+        assert_eq!(start(&project, "task-1", None)?.key, task.key);
         let second = start(&project, "task-2", None)?;
         task.lifecycle = Lifecycle::Closing;
         project.save(&task)?;
@@ -362,6 +371,31 @@ pub(crate) mod tests {
         Ok(())
     }
     #[test]
+    fn repeating_start_preserves_edits_without_fetching_or_changing_repository() -> Result<()> {
+        let (_temp, _home, project) = fixture()?;
+        let task = start(&project, "repeat", None)?;
+        let edit = Path::new(&task.workspace).join("local-edit");
+        fs::write(&edit, "keep me")?;
+        output(
+            &project.root.join("cat-herder"),
+            "git",
+            &["remote", "set-url", "origin", "/aide-test-does-not-exist"],
+        )?;
+
+        let repeated = start(&project, "repeat", Some("cat-herder"))?;
+        assert_eq!(repeated.key, task.key);
+        assert_eq!(fs::read_to_string(edit)?, "keep me");
+        assert_eq!(project.tasks()?.len(), 1);
+        assert!(start(&project, "repeat", Some("unknown")).is_err());
+
+        let mut closing = repeated;
+        closing.lifecycle = Lifecycle::Closing;
+        project.save(&closing)?;
+        assert!(start(&project, "repeat", None).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn failed_creation_can_be_retried_and_path_traversal_is_rejected() -> Result<()> {
         let (_temp, _home, project) = fixture()?;
         for id in ["../outside", "-flag", "a/b", "", "task;echo"] {
@@ -370,9 +404,12 @@ pub(crate) mod tests {
         let mut task = start(&project, "retry", None)?;
         task.lifecycle = Lifecycle::Preparing;
         project.save(&task)?;
+        // Model a crash after jj registered the workspace but before Aide wrote ownership.
+        fs::remove_file(Path::new(&task.workspace).join(".jj/aide-owner"))?;
         let restored = start(&project, "retry", None)?;
         assert_eq!(task.key, restored.key);
         assert_eq!(restored.lifecycle, Lifecycle::Open);
+        verify_workspace(&restored)?;
         Ok(())
     }
     #[test]

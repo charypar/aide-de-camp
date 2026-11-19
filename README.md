@@ -1,5 +1,9 @@
 # Aide de camp
 
+Multi-machine setup and private dashboards: [remote access guide](docs/REMOTES.md).
+
+New Linux host: [machine setup manual](docs/LINUX_SETUP.md).
+
 > **Big honking warning**: This is entirely vibe coded, I haven't even read the code, and might not until I feel like it.
 > It's very much built for my preferred tools and workflow – codex, tmux, Alacritty, Zed – therefore unlikely to work
 > for yours.

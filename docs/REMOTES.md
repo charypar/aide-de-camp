@@ -1,0 +1,96 @@
+# Running Aide across machines
+
+This implementation uses an externally installed Tailscale client. Each host owns its tasks; your dashboard host aggregates peers and launches its own terminal windows. All devices allowed to reach the private endpoint are trusted to manage tasks. Browser-origin checks remain enabled. Do not expose Aide through Funnel or a public listener.
+
+## Prepare a Mac and Linux VM
+
+For the complete machine setup, personal configuration, authentication, and source-build procedure, follow [Linux machine setup](LINUX_SETUP.md).
+
+Use a Linux VM with its own disk and checkout. UTM with an Ubuntu image matching the Mac CPU architecture is suitable; 4 CPUs, 8 GB RAM and 60 GB storage are reasonable development defaults.
+
+1. Install Tailscale on the Mac and Linux VM and sign both into the same account. See [Linux installation](https://tailscale.com/docs/install/linux).
+2. Enable Tailscale SSH on the Linux VM with `sudo tailscale set --ssh`. Configure the tailnet SSH policy to allow your identity to access the intended Linux account. See [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh).
+3. Check `ssh <linux-user>@<vm-name>` from the Mac. Ordinary OpenSSH configuration and keys also work; Aide does not manage SSH credentials.
+4. Install Rust, Just, Git, jj, tmux, fish, and Codex on the VM; configure Codex and VCS credentials there. Alacritty is needed only on desktop hosts that launch windows. See the root README for the existing development setup and installing Just.
+5. Check out this version on each host and run `just install-aide`. The dashboard build requires Trunk and the wasm32 Rust target (`just setup` installs/checks Rust build dependencies).
+6. Create a project using `aide init /path/to/project --repo /path/to/project/repository` on each task host.
+
+## Run privately
+
+Configure the private route once on each host (use sudo on Linux):
+
+```sh
+tailscale serve --bg --https=443 --set-path=/aide http://127.0.0.1:49173
+```
+
+Then run Aide in a foreground terminal:
+
+```sh
+aide --tailnet --no-open
+```
+
+The Tailscale executable must be on PATH. Complete any HTTPS/Serve enrollment prompt during the one-time setup. Aide defaults to loopback port 49173 and reads the existing Serve configuration without modifying it or requiring operator privileges. Missing or mismatched routes, shadowing subroutes, and enabled Funnel produce an error. If using `--port` to override the default, configure the route to match. `--port 0` remains available for an ephemeral loopback-only development server.
+
+Visit `https://<machine>.<tailnet>.ts.net/aide/`, including from the same Mac. `tailscale serve status` shows the address. The printed loopback URL is also available for troubleshooting. Stopping Aide leaves its Serve route configured, but unavailable until Aide restarts.
+
+The header shows each machine's name, `(attention.ready)` counts, and a connection dot. Click a machine to filter tasks; click it again to show all machines. Disconnected machines retain their names but show no task counts. Tasks remains on the left; the top-right cog opens the dashboard host's AI configuration (independent of the task filter).
+
+Aide probes the visible Tailscale device list periodically and refreshes known hosts' task snapshots. Discovery can take roughly 30 seconds plus probe time. Known unavailable hosts remain listed as disconnected with no stale tasks/counts. `AIDE_NAME` overrides the displayed machine name. `AIDE_DESKTOP=1` enables desktop launching (default on macOS); `AIDE_DESKTOP=0` disables it. A Linux desktop can opt in explicitly.
+
+Use the Mac dashboard for terminal windows on the Mac. Local tasks attach directly; VM tasks run the same Aide attachment command through SSH. The peer advertises its executable and Aide-home paths, avoiding reliance on the SSH shell's PATH. A headless dashboard can manage tasks but cannot open a desktop window; CLI attachment still works.
+
+## SSH destination mapping
+
+By default, Aide uses the peer's Tailscale DNS name and your normal SSH configuration. Configure `User` for that hostname in `~/.ssh/config` when the Linux username differs. Alternatively, create `~/.aide/ssh-peers.json` mapping instance IDs (shown by `aide peer list`) to SSH aliases:
+
+```json
+{
+  "PEER-INSTANCE-ID": "aide-vm"
+}
+```
+
+The alias belongs in your ordinary SSH configuration. The SSH account must own the peer's Aide home and tasks. Host verification/authentication prompts occur in the terminal. A closed terminal disconnects SSH without completing the task.
+
+## CLI
+
+Keep the dashboard running with `--tailnet` to discover peers. CLI commands use its remembered peer addresses and query fresh state:
+
+```sh
+aide peer list
+aide task list --all-peers
+aide task list --peer aide-vm
+aide task attach example --peer aide-vm --project ProjectName
+aide task start example --peer aide-vm --project ProjectName --repo repository --new-window
+aide task park example --peer aide-vm --project ProjectName
+aide task cleanup example --peer aide-vm --project ProjectName
+```
+
+Peer selectors accept a unique name or instance ID. Project selectors accept a unique project name or host-local root. Remote PR link/unlink/list/refresh and recovery use the task host's configuration. Cleanup requires the same explicit confirmation as local cleanup. Remote workspace-only start, editor launch, and guided-review routing are not supported in this slice.
+
+After a timeout, execution may still be underway or complete. Inspect task state before retrying. A retry is a new request: matching startup reuses existing work, cleanup continues partial removal, parking sets an explicit state, and recovery reuses healthy components. No commands are automatically replayed after reconnecting.
+
+## Automatic startup
+
+Validate foreground startup before installing a service. Templates are in `examples/aide.service` (systemd user service) and `examples/dev.aide.dashboard.plist` (macOS LaunchAgent). Replace placeholder paths and ensure PATH includes all host dependencies.
+
+For Linux, copy the unit to `~/.config/systemd/user/aide.service`, then run:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now aide
+journalctl --user -u aide -f
+```
+
+To keep a user service running after logout and start it at boot, an administrator can enable lingering with `sudo loginctl enable-linger <user>`.
+
+For macOS, edit the plist paths and install it under `~/Library/LaunchAgents/dev.aide.dashboard.plist`, then load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.aide.dashboard.plist`. This runs in the logged-in desktop user's session. Use the service's log files for startup errors. Serve does not start Aide itself.
+
+## Validation status
+
+Controlled Rust tests cover request correlation, lost-response reconciliation, host identity checks, routed peer actions, and discarding disconnected data. Browser acceptance covers the `/aide/` prefix, headless controls, and connection loss alongside existing task flows. See `plans/REMOTES_PLAN.md` for the latest actual results and remaining gaps. Live Mac/Linux acceptance passed on 2026-11-19: private Serve, automatic discovery, remote creation and parking, SSH/tmux attachment, native Codex recording, service restarts, VM reboot recovery, and cleanup. Cloud-host testing remains separate.
+
+### Prevent accidental public exposure
+
+Keep the `funnel` node attribute unavailable to Aide hosts in the Tailscale policy. Remove it from any applicable `nodeAttrs` grants (including broad `autogroup:member` grants); preserve unrelated attributes and access rules. Aide checks for Funnel at startup, not continuously. Do not enable Funnel later while Aide is running. See [Tailscale Funnel policy requirements](https://tailscale.com/docs/features/tailscale-funnel).
+
+Only host trusted applications on other paths of the same Serve hostname: browser origins do not isolate `/aide` from sibling paths. A detected duplicate Aide identity stays blocked, including CLI calls; repair the cloned host identity and remove its conflicting entry from `known-peers.json` while Aide is stopped before rediscovery.
