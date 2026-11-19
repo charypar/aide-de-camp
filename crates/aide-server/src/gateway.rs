@@ -57,8 +57,22 @@ impl Manager {
         if launch && !self.host.identity.desktop {
             bail!("This dashboard host cannot launch terminal windows");
         }
-        if matches!(command, Command::Editor { .. } | Command::Review { .. }) {
-            bail!("Remote editor and review integration are not available yet");
+        if matches!(command, Command::Editor { .. }) {
+            if !self.host.identity.desktop {
+                bail!("This dashboard host cannot launch desktop applications");
+            }
+            let editor = crate::editor::RemoteEditor::new(&self.home, &peer)?;
+            editor
+                .open(
+                    &peer,
+                    &root,
+                    &task.context("Task unavailable; refresh the task list")?,
+                )
+                .await?;
+            return Ok(format!("Requested Zed on {}", self.host.identity.name));
+        }
+        if matches!(command, Command::Review { .. }) {
+            bail!("Remote review integration is not available yet");
         }
         if matches!(command, Command::Attach { .. }) {
             attachment::open_remote(

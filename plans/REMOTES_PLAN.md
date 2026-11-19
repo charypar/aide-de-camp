@@ -36,6 +36,24 @@ Moved machine selection into the header with per-host `(attention.ready)` counts
 
 Verification: the new five-machine browser regression failed against the prior UI and passed after implementation. All 63 server tests passed (two opt-in live tests excluded), all 22 task-dashboard tests, four remote-dashboard tests, and six configuration tests passed. Server/UI Clippy, formatting, and builds passed. Headless Playwright MCP verified the new header, actual Mac/Linux discovery, machine selection, and configuration/Tasks navigation through the Mac Serve URL. Native session/reboot checks were not repeated for this UI change.
 
+## Remote Zed — implemented 2026-11-19
+
+The task heading offers Zed beside Terminal for local and remote tasks when the dashboard host can launch desktop applications. Zed runs on that host, matching Terminal semantics. Review remains local-only.
+
+`RemoteEditor` reuses the instance-keyed `ssh-peers.json` override and discovered hostname fallback shared with Alacritty. Use SSH aliases for custom ports, keys and jump hosts. The local Zed CLI receives one `ssh://user@host/absolute/path/` argument, with percent-encoded path bytes and a trailing directory slash. IPv6 destinations are bracketed. No shell is involved.
+
+The additive `editor_workspace` peer operation checks the host instance, registered project, task UUID, lifecycle, pending startup, task lock and workspace ownership. Resolution returns the fresh owner-side workspace, not a cached path. It never starts a runtime or desktop application. After the local CLI succeeds, the gateway repeats validation with an unpark acknowledgement. Missing/failing launchers leave parking intact. If acknowledgement fails after launch, the UI says launch was requested but task activation was not confirmed; no launch is automatically replayed. Cleanup can still occur between host validation and Zed opening the directory; this does not recreate an Aide task or runtime. Later SSH failures belong to Zed, so the success notice says “Requested Zed”.
+
+Install this version on both hosts: older peers do not understand the new operation. Existing peer operations and protocol version remain compatible. No service was upgraded during implementation.
+
+Sources: [official remote-development documentation](https://zed.dev/docs/remote-development) and [Zed SSH URL parser](https://github.com/zed-industries/zed/blob/main/crates/zed/src/zed/open_listener.rs). Zed manages its remote server and SSH prompts. Set `upload_binary_over_ssh` in Zed's connection settings if the remote cannot download its server directly.
+
+Verification: 70 server tests passed with two opt-in live tests excluded, followed by both attachment tests passing after adding the SSH destination regression. Coverage includes owner-side validation, launch failure, exact URL arguments, fresh workspace resolution, lost acknowledgement/retry and disconnected peers. Six focused browser cases passed across the main run and one rerun correcting macOS canonical-path expectations: remote Zed routing/error/retry/reload, headless controls, machine selection, local collapsed shortcuts and parking behavior. Playwright MCP was unavailable, so browser checks used the repository's headless Playwright runner.
+
+Native Zed 1.29.2 connected from the Mac to `viktor@linux-vm` (Linux ARM64), started its remote server, and persisted the exact temporary workspace path containing spaces, Unicode, `%`, `#`, `?` and `:`. An isolated-profile attempt exited because Zed was already running; the successful check used a new window in the existing application. The disposable folder is `/tmp/aide-zed-check.RcQ5F4/space é%#?:123`. Interactive editing/reconnection and a live dashboard click through two upgraded services were not tested. Native Codex and guided-review flows were unchanged and not rerun.
+
+Server/UI builds, normal server/UI Clippy and formatting passed. All-target Clippy remains blocked by the pre-existing `items_after_test_module` warning in `worker.rs`; it passes with only that lint suppressed.
+
 ## Experience and scope
 
 Use the Mac's local Aide dashboard and CLI to inspect and manage tasks on the Mac and Linux hosts. Start with a Linux VM running on the Mac, using its own filesystem and project checkout. Join both hosts to the same Tailscale network and exercise actual private networking, not shared folders or a localhost-only substitute.
@@ -46,7 +64,7 @@ Local and remote control are equivalent operations reached through different int
 
 Ownership determines where work executes; host capabilities determine available desktop actions; transport only determines how requests reach the owner. The local CLI may continue operating without a running service, while remote API requests require one, but both invoke the same operation implementation.
 
-Phone interaction is deferred. Remote editor launching and guided-review routing are outside this first slice; retain existing local actions and make unsupported remote actions explicit. No browser terminal, custom URL handler, SSH credential UI, or durable command ledger.
+Phone interaction and remote guided-review routing remain deferred. Remote Zed launching is implemented as the follow-up described above; retain existing local actions. No browser terminal, custom URL handler, SSH credential UI, or durable command ledger.
 
 ## Service and client responsibilities
 

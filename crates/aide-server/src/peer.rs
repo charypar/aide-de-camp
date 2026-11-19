@@ -94,6 +94,29 @@ impl Host {
                     task: Box::new(task),
                 })
             }
+            Operation::EditorWorkspace {
+                project,
+                id,
+                key,
+                unpark,
+            } => {
+                let project = self.project(&project)?;
+                let _transition = project.task_lock(&id)?;
+                let task = project.task(&id)?;
+                if task.key != key {
+                    bail!("Task identity changed; refresh task list");
+                }
+                if task.lifecycle != aide_core::Lifecycle::Open || project.startup_pending(&id)? {
+                    bail!("Task is not open for editing");
+                }
+                crate::workspace::verify_workspace(&task)?;
+                if unpark {
+                    project.set_parked(&id, false)?;
+                }
+                Ok(Outcome::Workspace {
+                    path: task.workspace,
+                })
+            }
             Operation::Execute { command, key } => {
                 // Peer task management never launches an application on its owner.
                 match &command {
@@ -138,6 +161,79 @@ mod tests {
             instance: host.identity.instance.clone(),
             operation,
         }
+    }
+
+    #[tokio::test]
+    async fn editor_workspace_validates_identity_lifecycle_ownership_and_unparks_only_on_ack()
+    -> Result<()> {
+        let (_temp, home, project) = crate::workspace::tests::fixture()?;
+        let mut task = crate::workspace::start(&project, "editor", None)?;
+        let host = Host::new(home)?;
+        project.set_parked(&task.id, true)?;
+        let operation = |key: &str, unpark: bool| -> Result<Operation> {
+            Ok(serde_json::from_value(serde_json::json!({
+                "type": "editor_workspace", "project": project.root,
+                "id": task.id, "key": key, "unpark": unpark
+            }))?)
+        };
+        let response = host
+            .respond(request(&host, operation(&task.key, false)?))
+            .await;
+        let response = serde_json::to_value(response.outcome)?;
+        assert_eq!(response["type"], "workspace");
+        assert_eq!(response["path"], task.workspace);
+        assert!(project.is_parked(&task.id)?);
+        assert!(matches!(
+            host.respond(request(&host, operation("stale", true)?))
+                .await
+                .outcome,
+            Outcome::Error { .. }
+        ));
+        let lock = project.task_lock(&task.id)?;
+        assert!(matches!(
+            host.respond(request(&host, operation(&task.key, true)?))
+                .await
+                .outcome,
+            Outcome::Error { .. }
+        ));
+        drop(lock);
+        project.begin_startup(&task.id)?;
+        assert!(matches!(
+            host.respond(request(&host, operation(&task.key, true)?))
+                .await
+                .outcome,
+            Outcome::Error { .. }
+        ));
+        project.finish_startup(&task.id)?;
+        let marker = std::path::Path::new(&task.workspace).join(".jj/aide-owner");
+        std::fs::remove_file(&marker)?;
+        assert!(matches!(
+            host.respond(request(&host, operation(&task.key, true)?))
+                .await
+                .outcome,
+            Outcome::Error { .. }
+        ));
+        assert!(project.is_parked(&task.id)?);
+        std::fs::write(marker, &task.key)?;
+        let response = host
+            .respond(request(&host, operation(&task.key, true)?))
+            .await;
+        assert_eq!(serde_json::to_value(response.outcome)?["type"], "workspace");
+        assert!(!project.is_parked(&task.id)?);
+        for lifecycle in [
+            aide_core::Lifecycle::Closing,
+            aide_core::Lifecycle::Completed,
+        ] {
+            task.lifecycle = lifecycle;
+            project.save(&task)?;
+            assert!(matches!(
+                host.respond(request(&host, operation(&task.key, true)?))
+                    .await
+                    .outcome,
+                Outcome::Error { .. }
+            ));
+        }
+        Ok(())
     }
 
     #[test]

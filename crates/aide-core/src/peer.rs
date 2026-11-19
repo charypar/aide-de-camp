@@ -43,6 +43,12 @@ pub enum Operation {
         id: String,
         key: String,
     },
+    EditorWorkspace {
+        project: String,
+        id: String,
+        key: String,
+        unpark: bool,
+    },
     Execute {
         command: Command,
         key: Option<String>,
@@ -60,6 +66,7 @@ pub struct Response {
 pub enum Outcome {
     Projects { projects: Vec<ProjectView> },
     Task { task: Box<TaskView> },
+    Workspace { path: String },
     Success { message: String },
     Error { message: String },
 }

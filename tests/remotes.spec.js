@@ -1,3 +1,4 @@
+import {realpathSync} from 'node:fs';
 import {test, expect} from '@playwright/test';
 import {binary, fixture, manager, stop, cleanup, taskRow} from './aide-fixture.js';
 
@@ -33,9 +34,9 @@ test('headless dashboard creates tasks without launching desktop applications', 
   await page.getByLabel('Task ID',{exact:true}).fill('headless-task');
   await page.getByRole('button',{name:'Start task',exact:true}).click();
   await expect(taskRow(page,'headless-task')).toBeVisible();
-  await expect(page.getByRole('button',{name:'Open terminal',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Terminal',exact:true})).toHaveCount(0);
   await taskRow(page,'headless-task').getByRole('button').first().click();
-  await expect(page.getByRole('button',{name:'Open Zed',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Zed',exact:true})).toHaveCount(0);
  } finally {if(server) await stop(server);cleanup(f);}
 });
 
@@ -109,4 +110,44 @@ test('remote machine selection survives snapshots and disconnected tasks disappe
   await page.getByRole('link',{name:'Tasks',exact:true}).click();
   await expect(page.getByRole('button',{name:'New task',exact:true})).toBeVisible();
  } finally {if(server) await stop(server);cleanup(f);}
+});
+
+
+test('remote Zed shortcut targets the owner and reports launch errors without expanding', async ({page}) => {
+ const f=fixture();let server;const commands=[];let fail=true;
+ try {
+  f.run(binary,['task','start','remote-editor','--workspace-only']);
+  server=await manager(f);
+  await page.routeWebSocket('**/ws',socket=>{
+   const backend=socket.connectToServer();
+   backend.onMessage(data=>{
+    const event=JSON.parse(data.toString());
+    if(event.type==='hosts') event.hosts=[{identity:{...event.local,instance:'fixture-remote',name:'Linux VM',desktop:false},error:null}];
+    if(event.type==='snapshot') event.projects=event.projects.map(project=>({...project,root:`peer:fixture-remote:${project.root}`,source:{instance:'fixture-remote',name:'Linux VM',root:project.root}}));
+    socket.send(JSON.stringify(event));
+   });
+   socket.onMessage(data=>{
+    const request=JSON.parse(data.toString());commands.push(request.command);
+    socket.send(JSON.stringify({type:'action_result',request_id:request.request_id,error:fail,message:fail?'Zed launcher failed':'Requested Zed on Mac'}));
+   });
+  });
+  await page.goto(server.url);
+  const row=taskRow(page,'remote-editor');
+  for(const width of [1440,390]){
+   await page.setViewportSize({width,height:900});
+   await expect(row.getByRole('button',{name:'Zed',exact:true})).toBeVisible();
+   await expect(row.getByRole('button',{name:'Terminal',exact:true})).toBeVisible();
+  }
+  await row.getByRole('button',{name:'Zed',exact:true}).click();
+  await expect(page.getByRole('status')).toContainText('Zed launcher failed');
+  expect(commands[0]).toMatchObject({action:'editor',id:'remote-editor',project:`peer:fixture-remote:${realpathSync(f.root)}`});
+  await expect(row.locator('.task-title')).toHaveAttribute('aria-expanded','false');
+  fail=false;
+  await row.getByRole('button',{name:'Zed',exact:true}).click();
+  await expect(page.getByRole('status')).toContainText('Requested Zed on Mac');
+  await page.reload();
+  await expect(row.getByRole('button',{name:'Zed',exact:true})).toBeVisible();
+  await row.locator('.task-title').click();
+  await expect(row.getByRole('button',{name:'Review',exact:true})).toHaveCount(0);
+ } finally {if(server)await stop(server);cleanup(f);}
 });

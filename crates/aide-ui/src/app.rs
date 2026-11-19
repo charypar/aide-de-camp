@@ -258,8 +258,9 @@ fn Task(root: String, id: String) -> impl IntoView {
                 </span></Show>
             </button>
                 <crate::github::PrTags task=task/>
-                <Show when=move || is_open() && cx.local.get().is_some_and(|host| host.desktop)><button class="terminal-action" aria-label="Open terminal" title=move || format!("Open terminal on {}", cx.local.get().map(|host| host.name).unwrap_or_default()) on:click=attach disabled=move || !cx.connected.get()>
-                    <span class="terminal-label">"Open terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span>
+                <Show when=move || is_open() && cx.local.get().is_some_and(|host| host.desktop)><button class="zed-action" title=move || format!("Open Zed on {}", cx.local.get().map(|host| host.name).unwrap_or_default()) on:click=editor disabled=move || !cx.connected.get()>"Zed"</button></Show>
+                <Show when=move || is_open() && cx.local.get().is_some_and(|host| host.desktop)><button class="terminal-action" aria-label="Terminal" title=move || format!("Open terminal on {}", cx.local.get().map(|host| host.name).unwrap_or_default()) on:click=attach disabled=move || !cx.connected.get()>
+                    <span class="terminal-label">"Terminal"</span><span class="terminal-icon" aria-hidden="true">">_"</span>
                 </button></Show>
             </div>
             <Show when=move || expanded.get()>
@@ -274,7 +275,7 @@ fn Task(root: String, id: String) -> impl IntoView {
                         Some(TerminalActivity::Working) => "Terminal working — commands are running in one or more panes outside Codex.",
                         None => "Terminal activity unavailable — the session is absent or process inspection did not succeed.",
                     }}</p></Show>
-                    <Show when=is_open><div class="actions"><Show when=move || !root.get_value().starts_with("peer:") && cx.local.get().is_some_and(|host| host.desktop)><button on:click=editor>"Open Zed"</button><button on:click=review>"Review"</button></Show><button on:click=recover>"Recover session"</button>
+                    <Show when=is_open><div class="actions"><Show when=move || !root.get_value().starts_with("peer:") && cx.local.get().is_some_and(|host| host.desktop)><button on:click=review>"Review"</button></Show><button on:click=recover>"Recover session"</button>
                         <Show when=move || task.get().is_some_and(|t| matches!(t.status, Status::Waiting | Status::Working | Status::Attention | Status::Parked))>
                             <button on:click=toggle_parking disabled=move || !cx.connected.get() title="Set aside while waiting externally. Opening Terminal, Zed or Review, or newly requiring attention, unparks it.">{move || if task.get().is_some_and(|t| t.status == Status::Parked) { "Unpark task" } else { "Park task" }}</button>
                         </Show>

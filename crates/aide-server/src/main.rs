@@ -3,6 +3,7 @@ mod attachment;
 mod cli;
 mod configuration;
 mod database;
+mod editor;
 mod gateway;
 mod github;
 mod http;

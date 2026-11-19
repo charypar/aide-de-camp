@@ -165,7 +165,7 @@ input, select { padding: 10px; border: 1px solid var(--border); border-radius: 7
   .task-status::before, .terminal-status::before { display: none; }
   .terminal-label { display: none; }
   .terminal-icon { display: inline; font-family: ui-monospace, monospace; }
-  .terminal-action { padding: 6px; min-height: 36px; min-width: 36px; }
+  .terminal-action, .zed-action { padding: 6px; min-height: 36px; min-width: 36px; }
   .details dl { grid-template-columns: 1fr; gap: 6px; }
   .details dd { margin-bottom: 8px; }
   .danger { margin-left: 0; }
@@ -195,8 +195,9 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .pr-checks summary { cursor: pointer; }
 @media (max-width: 650px) {
   .task-heading.has-prs { flex-wrap: wrap; padding-bottom: 8px; }
-  .has-prs .task-title { flex-basis: calc(100% - 48px); order: -2; }
-  .has-prs .terminal-action { order: -1; }
+  .has-prs .task-title { flex-basis: 0; order: -2; }
+  .has-prs .terminal-action, .has-prs .zed-action { order: -1; }
+  .has-prs .pr-tags { flex-basis: 100%; }
 }
 
 [hidden] { display: none !important; }

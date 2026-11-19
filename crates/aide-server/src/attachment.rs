@@ -26,7 +26,7 @@ fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-pub fn remote_command(home: &Home, peer: &Peer, root: &str, task: &Task) -> Result<Vec<String>> {
+pub fn destination(home: &Home, peer: &Peer) -> Result<String> {
     let overrides: BTreeMap<String, String> = match std::fs::read(home.path.join("ssh-peers.json"))
     {
         Ok(bytes) => serde_json::from_slice(&bytes)?,
@@ -43,6 +43,11 @@ pub fn remote_command(home: &Home, peer: &Peer, root: &str, task: &Task) -> Resu
     {
         bail!("Invalid SSH destination; configure a host alias in ssh-peers.json");
     }
+    Ok(destination)
+}
+
+pub fn remote_command(home: &Home, peer: &Peer, root: &str, task: &Task) -> Result<Vec<String>> {
+    let destination = destination(home, peer)?;
     let mut remote = vec![peer.identity.executable.clone()];
     remote.extend(arguments(
         &peer.identity.home,
@@ -105,6 +110,31 @@ pub fn open_remote(home: &Home, peer: &Peer, root: &str, task: &Task) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_destination_reuses_instance_override_or_discovered_hostname() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let home = Home::new(Some(temp.path().into()))?;
+        let peer = Peer {
+            identity: crate::peer::Host::new(home.clone())?.identity,
+            origin: "https://linux.example.ts.net".into(),
+            identity_conflict: false,
+            projects: vec![],
+            error: None,
+        };
+        assert_eq!(destination(&home, &peer)?, "linux.example.ts.net");
+        for target in ["viktor@linux-vm", "vm-with-custom-port"] {
+            std::fs::write(
+                home.path.join("ssh-peers.json"),
+                serde_json::to_vec(&BTreeMap::from([(&peer.identity.instance, target)]))?,
+            )?;
+            assert_eq!(destination(&home, &peer)?, target);
+        }
+        std::fs::write(home.path.join("ssh-peers.json"), "invalid JSON")?;
+        assert!(destination(&home, &peer).is_err());
+        Ok(())
+    }
+
     #[test]
     fn shell_arguments_preserve_quotes_and_metacharacters() -> Result<()> {
         let text = "space ' quote $(echo wrong); newline\n";

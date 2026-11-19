@@ -485,6 +485,20 @@ mod tests {
         assert!(hosts[0].error.is_none());
         assert_eq!(projects[0].tasks[0].task.key, task.key);
         gateway.peers = Some(peers.clone());
+        gateway.host.identity.desktop = false;
+        let error = gateway
+            .dispatch(Command::Editor {
+                project: projects[0].root.clone(),
+                id: task.id.clone(),
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot launch desktop applications")
+        );
+
         gateway
             .dispatch(Command::SetParked {
                 project: projects[0].root.clone(),
