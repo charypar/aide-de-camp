@@ -51,6 +51,14 @@ By default, Aide uses the peer's Tailscale DNS name and your normal SSH configur
 
 The alias belongs in your ordinary SSH configuration. The SSH account must own the peer's Aide home and tasks. Host verification/authentication prompts occur in the terminal. A closed terminal disconnects SSH without completing the task.
 
+## Open remote workspaces in Zed
+
+Use the Mac dashboard's **Zed** shortcut beside **Terminal**. Install this Aide version on both the dashboard host and task host, and make the `zed` CLI available on the dashboard service's PATH. No Zed desktop installation is needed on the task host.
+
+Zed reuses Aide's SSH destination mapping above. Put custom ports, identity files and jump hosts in `~/.ssh/config` under the selected alias. The SSH account must access the task owner's workspace. Zed opens its window on the dashboard host, connects over SSH, and manages its matching remote server. Host-key/password prompts and later connection errors appear in Zed. For restricted remote internet access, configure Zed's `upload_binary_over_ssh` option.
+
+Aide validates the current remote workspace before launching and unparks the task after a successful CLI request. “Requested Zed” confirms the launch request, not an established SSH session. A failed activation acknowledgement after launch is reported separately; inspect Zed and refresh task state before retrying. Headless dashboards omit Zed and Terminal; remote Review remains unavailable.
+
 ## CLI
 
 Keep the dashboard running with `--tailnet` to discover peers. CLI commands use its remembered peer addresses and query fresh state:
@@ -65,7 +73,7 @@ aide task park example --peer aide-vm --project ProjectName
 aide task cleanup example --peer aide-vm --project ProjectName
 ```
 
-Peer selectors accept a unique name or instance ID. Project selectors accept a unique project name or host-local root. Remote PR link/unlink/list/refresh and recovery use the task host's configuration. Cleanup requires the same explicit confirmation as local cleanup. Remote workspace-only start, editor launch, and guided-review routing are not supported in this slice.
+Peer selectors accept a unique name or instance ID. Project selectors accept a unique project name or host-local root. Remote PR link/unlink/list/refresh and recovery use the task host's configuration. Cleanup requires the same explicit confirmation as local cleanup. Remote workspace-only start and guided-review routing are not supported in this slice. Use the dashboard Zed button for remote editing.
 
 After a timeout, execution may still be underway or complete. Inspect task state before retrying. A retry is a new request: matching startup reuses existing work, cleanup continues partial removal, parking sets an explicit state, and recovery reuses healthy components. No commands are automatically replayed after reconnecting.
 

@@ -10,3 +10,10 @@
 - Prefer cohesive types and `impl` blocks for behavior with shared state or responsibilities over collections of free functions. Keep small pure helpers where they improve clarity. Use blank lines between logical steps in longer blocks and between blocks; avoid compressed multi-step expressions and dense event handlers.
 
 - Keep crate entry points small; put models, lifecycle/session handling, transport, and UI concerns in focused modules. Prefer named event handlers over substantive inline closures in UI markup. Use enums for finite domain states and convert native protocol strings at the adapter boundary.
+
+## Upgrading installed Aide services
+
+- When the user authorizes an upgrade, run `just upgrade-aide` from the intended source revision on each host. This builds the release dashboard, installs Aide, and gracefully restarts the existing service. Do not replace this with manual Cargo installs, service unloads, or process kills; task sessions must survive.
+- `just upgrade-aide` does not fetch or synchronize source. Prefer jj for cross-machine delivery: describe/commit the tested change, create or advance a dedicated bookmark, push it, then fetch that bookmark on the other host. Inspect its working copy first; use a clean working copy or a separate jj workspace without overwriting existing work. Verify both hosts resolve to the same commit before building. Upgrade the task host before the dashboard host when adding a peer operation. Do not transfer ad hoc source archives when the jj remote is available.
+- The current paired setup is the Mac LaunchAgent and `viktor@linux-vm` systemd user service. Run the recipe over SSH on Linux, with Cargo and Trunk on PATH. Reuse the Linux checkout's Cargo target directory when appropriate to avoid a cold build; Cargo serializes access.
+- After each upgrade, run `just aide-service-status`, verify its process restarted and the private identity endpoint responds, then check peer discovery and the changed behavior through the Mac dashboard. Preserve service definitions, Aide homes, credentials and Tailscale configuration. See `docs/REMOTES.md` for setup and upgrade semantics.

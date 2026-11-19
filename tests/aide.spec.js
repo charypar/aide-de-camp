@@ -25,6 +25,35 @@ async function stop(server,signal='SIGINT'){if(server.child.exitCode!==null||ser
 function taskRow(page,id){return page.locator('.task').filter({has:page.getByRole('button',{name:new RegExp(id)})});}
 function cleanup(f){try{f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'kill-server']);}catch{}}
 
+test('workspace shortcuts are adjacent in collapsed rows on desktop and mobile',async({page})=>{
+ const f=fixture();let server;
+ try{
+  writeFileSync(join(f.dir,'zed'),'#!/bin/sh\nexit 0\n',{mode:0o755});
+  f.env.PATH=`${f.dir}:${f.env.PATH}`;
+  f.run(binary,['task','start','shortcuts','--workspace-only']);
+  server=await manager(f);await page.goto(server.url);
+  const row=taskRow(page,'shortcuts');
+  for(const width of [1440,390,320]){
+   await page.setViewportSize({width,height:900});
+   await expect(row.locator('.task-title')).toHaveAttribute('aria-expanded','false');
+   const zed=row.getByRole('button',{name:'Zed',exact:true});
+   const terminal=row.getByRole('button',{name:'Terminal',exact:true});
+   await expect(zed).toBeVisible();await expect(terminal).toBeVisible();
+   expect(await zed.evaluate(el=>el.nextElementSibling?.getAttribute('aria-label'))).toBe('Terminal');
+   const a=await zed.boundingBox(),b=await terminal.boundingBox();
+   expect(Math.abs(a.y-b.y)).toBeLessThan(2);
+   expect(b.x+b.width).toBeLessThanOrEqual(width);
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  }
+  await row.getByRole('button',{name:'Zed',exact:true}).click();
+  await expect(page.getByRole('status')).toContainText('Opened Zed');
+  await expect(row.locator('.task-title')).toHaveAttribute('aria-expanded','false');
+  await row.locator('.task-title').click();
+  await expect(row.getByRole('button',{name:'Zed',exact:true})).toHaveCount(1);
+  await expect(row.locator('.details').getByRole('button',{name:'Zed',exact:true})).toHaveCount(0);
+ }finally{if(server)await stop(server);cleanup(f);}
+});
+
 test('parking persists, keeps inspection passive and resumes through task actions',async({page})=>{
  const f=fixture();let server=await manager(f);
  try{
@@ -59,7 +88,7 @@ test('parking persists, keeps inspection passive and resumes through task action
   writeFileSync(join(f.dir,'zed'),'#!/bin/sh\nexit 0\n',{mode:0o755});
   f.env.PATH=`${f.dir}:${f.env.PATH}`;
   await stop(server);server=await manager(f);await page.goto(server.url);
-  for(const action of ['Open Zed','Review','Open terminal']){
+  for(const action of ['Zed','Review','Terminal']){
    await park();await expand();await row.getByRole('button',{name:action,exact:true}).click();
    await expect(row.locator('.task-status')).toHaveText('Ready');
    await expect(page).toHaveTitle('(0·1) Aide de camp');
@@ -96,7 +125,7 @@ test('parking ignores background commands and survives a failed workspace action
   const owner=readFileSync(marker,'utf8');
   unlinkSync(marker);
   await row.locator('.task-title').click();
-  await row.getByRole('button',{name:'Open Zed',exact:true}).click();
+  await row.getByRole('button',{name:'Zed',exact:true}).click();
   await expect(page.getByRole('status')).toContainText('ownership marker is missing');
   await expect(row.locator('.task-status')).toHaveText('Parked');
   writeFileSync(marker,owner);
@@ -141,7 +170,7 @@ test('parking working and attention tasks persists until new attention',async({p
   const sessions=f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'list-sessions','-F','#{session_name}']).trim();
   f.run('tmux',['-L',f.env.AIDE_TMUX_SOCKET,'send-keys','-t',`${sessions}:backend`,'C-c']);
   await expect(row.locator('.task-status')).toHaveText('Requires attention');
-  await row.getByRole('button',{name:'Open terminal',exact:true}).click();
+  await row.getByRole('button',{name:'Terminal',exact:true}).click();
   await expect(row.locator('.task-status')).toHaveText('Ready');
  }finally{await stop(server);cleanup(f);}
 });
@@ -190,7 +219,7 @@ test('startup stays neutral through preparation, backend launch and reload',asyn
   await expect(row.locator('.task-status')).toHaveAttribute('title','Preparing workspace');
   await expect(page).toHaveTitle('Aide de camp');
   await row.getByRole('button',{name:/starting/}).click();
-  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toHaveCount(0);
+  await expect(row.getByRole('button',{name:'Terminal',exact:true})).toHaveCount(0);
   await expect(row.getByRole('button',{name:'Recover session'})).toHaveCount(0);
   await expect(row.getByRole('button',{name:'Close task'})).toHaveCount(0);
   await page.reload();
@@ -204,7 +233,7 @@ test('startup stays neutral through preparation, backend launch and reload',asyn
   await expect(row.locator('.task-status')).toHaveText('Starting');
   unlinkSync(startup);
   await expect(row.locator('.task-status')).toHaveText('Ready');
-  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toBeVisible();
+  await expect(row.getByRole('button',{name:'Terminal',exact:true})).toBeVisible();
   await expect(page).toHaveTitle('(0·1) Aide de camp');
   expect(statuses).toContain('starting');expect(statuses).not.toContain('attention');
  }finally{for(const gate of [prepare,startup])if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
@@ -230,7 +259,7 @@ test('failed backend startup requires attention and recovers',async({page})=>{
   await expect(row.locator('.task-status')).toHaveText('Requires attention');
   unlinkSync(join(f.dir,'startup.fail'));
   await row.getByRole('button',{name:/failed-start/}).click();
-  await row.getByRole('button',{name:'Open terminal',exact:true}).click();
+  await row.getByRole('button',{name:'Terminal',exact:true}).click();
   await expect(row.locator('.task-status')).toHaveText('Ready');
   await expect(page).toHaveTitle('(0·1) Aide de camp');
  }finally{if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
@@ -255,7 +284,7 @@ test('manager interruption during startup requires attention after restart and c
   await expect(row.locator('.task-status')).toHaveText('Requires attention');
   await expect(row.locator('.task-status')).toHaveAttribute('title',/Startup interrupted.*Recover session/);
   await expect(page).toHaveTitle('(1·0) Aide de camp');
-  await row.getByRole('button',{name:'Open terminal',exact:true}).click();
+  await row.getByRole('button',{name:'Terminal',exact:true}).click();
   await expect(row.locator('.task-status')).toHaveText('Ready');
   await expect(page).toHaveTitle('(0·1) Aide de camp');
  }finally{if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
@@ -304,7 +333,7 @@ test('closing retains its title without attention, and interrupted cleanup can b
   await expect(row.locator('.task-status')).toHaveText('Closing');
   await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
   await expect(page).toHaveTitle('Aide de camp');
-  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toHaveCount(0);
+  await expect(row.getByRole('button',{name:'Terminal',exact:true})).toHaveCount(0);
   await page.reload();
   await expect(row.locator('.task-status')).toHaveText('Closing');
   await expect(row.locator('.task-summary')).toHaveText('Fixture conversation');
@@ -363,7 +392,7 @@ test('repository defaults and selection survive refreshes; the full task title t
   await expect(row.getByRole('button',{name:'Copy path'})).toBeVisible();
   await title.press('Enter');await expect(title).toHaveAttribute('aria-expanded','false');
   await title.press('Space');await expect(title).toHaveAttribute('aria-expanded','true');
-  await row.getByRole('button',{name:'Open terminal'}).click();
+  await row.getByRole('button',{name:'Terminal',exact:true}).click();
   await expect(page.getByRole('status')).toContainText('Opened terminal');
   await expect(title).toHaveAttribute('aria-expanded','true');
   await page.setViewportSize({width:390,height:844});
@@ -503,7 +532,7 @@ test('collapsed tasks show the summary, ID label and coloured status on one line
   await expect(badge).toHaveText('Completed');
   await expect(badge).toHaveAttribute('data-status','completed');
   expect(colours.has(await badge.evaluate(el=>getComputedStyle(el).backgroundColor))).toBe(false);
-  await expect(row.getByRole('button',{name:'Open terminal'})).toHaveCount(0);
+  await expect(row.getByRole('button',{name:'Terminal',exact:true})).toHaveCount(0);
  }finally{await stop(server);cleanup(f);}
 });
 
@@ -551,7 +580,7 @@ test('terminal windows reuse Alacritty, rediscover stale sockets, and fall back 
   await page.goto(server.url);
   const row=taskRow(page,'window-test');await expect(row).toContainText('Fixture conversation');
   // The dashboard and CLI use the same launcher; successful IPC must not spawn.
-  await row.getByRole('button',{name:'Open terminal'}).click();
+  await row.getByRole('button',{name:'Terminal',exact:true}).click();
   await expect(page.getByRole('status')).toContainText('Opened terminal');
   expect(calls()).toHaveLength(1);
   const session=runtimeTools(f,'window-test').session;
@@ -633,7 +662,7 @@ test('terminal activity aggregates detached panes and ignores backend and Codex 
   const idleColor=await terminalBadge.evaluate(el=>getComputedStyle(el).color);
   expect(idleColor).not.toBe('rgb(35, 99, 43)');
   await expect(row.locator('.terminal-action .terminal-activity')).toHaveCount(0);
-  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toHaveAttribute('title',/^Open terminal on /);
+  await expect(row.getByRole('button',{name:'Terminal',exact:true})).toHaveAttribute('title',/^Open terminal on /);
   const title=await page.title();
   expect(r.tmux('list-clients','-t',r.session)).toBe('');
   r.tmux('rename-window','-t',backend,'my renamed backend');
@@ -826,7 +855,7 @@ test('slow repository work leaves one dashboard responsive; shared repo and task
   expect(()=>f.run(binary,['task','start','slow-first','--repo','repo','--workspace-only'])).toThrow(/busy/);
   // Another command on this very browser connection must complete before release.
   await start('fast','second');await expect(taskRow(page,'fast')).toContainText('Fixture conversation',{timeout:15000});
-  await healthy.getByRole('button',{name:'Open terminal'}).click();await expect(page.getByRole('status')).toContainText('Opened terminal');
+  await healthy.getByRole('button',{name:'Terminal',exact:true}).click();await expect(page.getByRole('status')).toContainText('Opened terminal');
   await start('slow-second','repo');
   await expect.poll(()=>existsSync(join(f.root,'.aide/task-locks/slow-second.lock'))).toBe(true);
   expect(readFileSync(join(gates,'repo.entered'),'utf8').trim().split('\n')).toHaveLength(1);

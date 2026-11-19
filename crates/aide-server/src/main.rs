@@ -4,6 +4,7 @@ mod cli;
 mod configuration;
 mod conversations;
 mod database;
+mod editor;
 mod gateway;
 mod github;
 mod http;

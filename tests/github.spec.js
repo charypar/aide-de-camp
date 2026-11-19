@@ -39,7 +39,7 @@ test('startup polls without a browser; an in-flight PR refresh cannot revive a c
   await page.getByLabel('Show completed').check();
   await expect(one.locator('.task-status')).toHaveText('Completed');
   await expect(one.locator('.task-heading .pr-tag')).toHaveAttribute('title',/Ready to merge.*Historical/);
-  await expect(one.getByRole('button',{name:'Open terminal',exact:true})).toHaveCount(0);
+  await expect(one.getByRole('button',{name:'Terminal',exact:true})).toHaveCount(0);
  }finally{if(existsSync(gate))unlinkSync(gate);await stop(server);cleanup(f);}
 });
 
@@ -58,7 +58,7 @@ test('compact PR tags align with task labels and stay clear of controls on phone
   for(const tag of await tags.all()){
    const box=await tag.boundingBox();expect(box.y).toBeGreaterThanOrEqual(title.y+title.height);expect(box.x+box.width).toBeLessThan(390);
   }
-  await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toBeVisible();
+  await expect(row.getByRole('button',{name:'Terminal',exact:true})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  }finally{await stop(server);cleanup(f);}
 });
@@ -93,7 +93,7 @@ test('N PR links, independent roles, attention, unlink, history and restart',asy
   const popupPromise=page.waitForEvent('popup');await badge.focus();await page.keyboard.press('Enter');const popup=await popupPromise;await popup.close();await expect(row.locator('.task-title')).toHaveAttribute('aria-expanded','true');
   // A second browser does not start another observer.
   const count=f.queries().length;const second=await context.newPage();await second.goto(server.url);await expect(second.locator('.pr-tag').first()).toBeVisible();await second.close();expect(f.queries()).toHaveLength(count);
-  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await expect(row.getByRole('button',{name:'Open terminal',exact:true})).toBeVisible();
+  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await expect(row.getByRole('button',{name:'Terminal',exact:true})).toBeVisible();
   // Unlink the sole actionable PR; native state and the other association remain.
   await row.getByRole('button',{name:'Unlink example/repo #1',exact:true}).click();await expect(row.locator('.task-heading .pr-tag')).toHaveCount(1);await expect(page).toHaveTitle('(0·1) Aide de camp');
   await expect(row.locator('.task-title')).toHaveAttribute('aria-expanded','true');
