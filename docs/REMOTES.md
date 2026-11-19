@@ -71,19 +71,27 @@ After a timeout, execution may still be underway or complete. Inspect task state
 
 ## Automatic startup
 
-Validate foreground startup before installing a service. Templates are in `examples/aide.service` (systemd user service) and `examples/dev.aide.dashboard.plist` (macOS LaunchAgent). Replace placeholder paths and ensure PATH includes all host dependencies.
-
-For Linux, copy the unit to `~/.config/systemd/user/aide.service`, then run:
+Configure Tailscale Serve first, then use the repository recipes (Python 3 and Just required):
 
 ```sh
-systemctl --user daemon-reload
-systemctl --user enable --now aide
-journalctl --user -u aide -f
+just install-aide          # build/install the binary and embedded dashboard
+just aide-service-install # install/enable a user LaunchAgent or systemd unit
+just aide-service-status
 ```
 
-To keep a user service running after logout and start it at boot, an administrator can enable lingering with `sudo loginctl enable-linger <user>`.
+After updating your checkout to the version you want:
 
-For macOS, edit the plist paths and install it under `~/Library/LaunchAgents/dev.aide.dashboard.plist`, then load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.aide.dashboard.plist`. This runs in the logged-in desktop user's session. Use the service's log files for startup errors. Serve does not start Aide itself.
+```sh
+just upgrade-aide         # build/install successfully, then restart the service
+```
+
+`upgrade-aide` does not fetch or change your checkout. A failed build/install leaves the running service alone. `install-aide` remains a binary-only installation for machines without a service. `aide-service-restart` restarts an existing service without rebuilding; on macOS it signals only the dashboard with SIGINT and lets launchd KeepAlive restart it, preserving task sessions. Check `aide-service-status` after a restart because startup can fail if Tailscale is unavailable or its route is wrong.
+
+Service setup uses the templates in `examples/`, substitutes your home on macOS, and preserves existing service files and custom settings on subsequent runs. It expects the binary at `~/.cargo/bin/aide` and defaults to port 49173, `--tailnet`, and the normal Aide home. If you use custom Cargo install paths or service settings, edit the service definition. Installing the service does not stop an unrelated foreground dashboard; stop it first if it owns the same home or port.
+
+On Linux this enables the systemd user service. For startup without a login, an administrator must still run `sudo loginctl enable-linger <user>`. Logs: `journalctl --user -u aide -f`.
+
+On macOS the LaunchAgent starts in your logged-in desktop session, not before login. Logs: `~/Library/Logs/aide.log` and `aide-error.log`. Serve does not start Aide itself. Tailscale enrollment, private Serve configuration, no-Funnel policy, and SSH authentication remain external setup steps.
 
 ## Validation status
 

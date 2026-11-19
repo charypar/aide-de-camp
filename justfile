@@ -41,6 +41,26 @@ install-aide:
     cd crates/aide-ui && env -u NO_COLOR trunk build --release --locked
     cargo install --locked --path crates/aide-server --force
 
+# Install/enable the per-user LaunchAgent or systemd service (after install-aide).
+aide-service-install:
+    python3 scripts/aide-service.py install
+
+# Gracefully restart the dashboard service; task sessions stay running.
+aide-service-restart:
+    python3 scripts/aide-service.py restart
+
+# Show service state and where to find its logs.
+aide-service-status:
+    python3 scripts/aide-service.py status
+
+# Build/install this checkout's Aide version, then restart the existing service.
+upgrade-aide: install-aide
+    python3 scripts/aide-service.py restart
+
+# Check service setup, custom configuration preservation, and restart commands.
+test-aide-service:
+    python3 -m unittest discover -s tests -p test_aide_service.py
+
 # Run automated Rust tests.
 test:
     cargo test --locked -p review-core -p review-server -p aide-core -p aide-server

@@ -272,3 +272,9 @@ With both hosts running Aide through Serve:
 7. Verify service and task recovery after a planned reboot before relying on unattended operation.
 
 Keep a record of which checks actually passed. The Mac/Linux VM journey above passed on 2026-11-19, including an actual reboot and unattended service startup. See the remote plan for the exact verification record and remaining cloud-host checks.
+
+## Routine service setup and upgrades
+
+After the one-time Tailscale route and source checkout are ready, run `just install-aide` followed by `just aide-service-install`. The latter installs/enables the systemd user service while preserving an existing unit. Lingering still requires the administrator step above. Run `just aide-service-status` to inspect it.
+
+For later updates, update the checkout with jj, then run `just upgrade-aide`. This builds and installs that checkout and restarts the service only after a successful installation. Use `just aide-service-restart` when only a restart is needed. These recipes also support the macOS LaunchAgent.
