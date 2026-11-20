@@ -77,7 +77,20 @@ if args and args[0]=='app-server':
                 if method=='initialize':result={'platformFamily':'unix','platformOs':'macos','userAgent':'fixture'}
                 elif method=='config/read':
                     if Path('.fixture-config-error').exists():error={'message':'Fixture configuration failure'}
-                    else:result={'config':{'developer_instructions':'Existing native preferences'}}
+                    else:
+                        result={'config':{'developer_instructions':'Existing native preferences'}}
+                        if os.environ.get('AIDE_FIXTURE_TRUST_CONFIG'):
+                            path=Path(os.environ['AIDE_FIXTURE_TRUST_CONFIG']);text=path.read_text();config=json.loads(text)
+                            result['config'].update(config)
+                            result['layers']=[{'name':{'type':'user','file':str(path)},'version':hashlib.sha256(text.encode()).hexdigest(),'config':config}]
+                elif method=='config/batchWrite' and os.environ.get('AIDE_FIXTURE_TRUST_CONFIG'):
+                    path=Path(os.environ['AIDE_FIXTURE_TRUST_CONFIG']);text=path.read_text();config=json.loads(text)
+                    if params['expectedVersion']!=hashlib.sha256(text.encode()).hexdigest():error={'message':'Configuration changed'}
+                    else:
+                        for edit in params['edits']:
+                            key=json.loads(edit['keyPath'][len('projects.'):-len('.trust_level')])
+                            config.setdefault('projects',{}).setdefault(key,{})['trust_level']=edit['value']
+                        path.write_text(json.dumps(config))
                 elif method=='thread/loaded/list':
                     other=other_thread()
                     result={'data':([other['id']] if other else [])+([state['thread']['id']] if state['thread'] else [])}

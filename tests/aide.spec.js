@@ -641,18 +641,50 @@ function runtimeTools(f,id){
  return {tmux,session,pane,capture,send,backend};
 }
 
+for(const trustScope of ['project','repository','untrusted workspace']){
+ test(`Codex startup inherits ${trustScope} trust without replacing explicit decisions`,async({page})=>{
+  const f=fixture(),config=join(f.dir,'codex-config.json'),root=realpathSync(f.root),workspace=join(root,'repo-tasks','trust');
+  f.env.AIDE_FIXTURE_TRUST_CONFIG=config;
+  const projects={[trustScope==='repository'?join(root,'repo'):root]:{trust_level:'trusted'}};
+  if(trustScope==='untrusted workspace')projects[workspace]={trust_level:'untrusted'};
+  writeFileSync(config,JSON.stringify({projects,model:'keep-model'}));
+  const server=await manager(f);
+  try{
+   f.run(binary,['task','start','trust','--workspace-only']);
+   f.run(binary,['task','recover','trust']);
+   const r=runtimeTools(f,'trust'),work=r.pane('work');
+   await expect.poll(()=>r.capture(work)).toContain('Fixture Codex conversation ready');
+   const saved=JSON.parse(readFileSync(config,'utf8'));
+   expect(saved.projects[workspace].trust_level).toBe(trustScope==='untrusted workspace'?'untrusted':'trusted');
+   expect(saved.model).toBe('keep-model');
+   await page.goto(server.url);
+   await expect(taskRow(page,'trust')).toContainText('Fixture conversation');
+   // A failed config read leaves the native UI available to ask for trust itself.
+   r.tmux('send-keys','-t',work,'C-d');
+   await expect.poll(()=>r.tmux('display-message','-p','-t',work,'#{pane_current_command}')).toBe('fish');
+   writeFileSync(join(workspace,'.fixture-config-error'),'fail');
+   await r.send(work,`'${binary}' codex resume`);
+   await expect.poll(()=>r.capture(work)).toContain('Could not inherit workspace trust');
+   await expect.poll(()=>r.capture(work)).toContain('Fixture Codex conversation ready');
+   expect(JSON.parse(readFileSync(config,'utf8'))).toEqual(saved);
+  }finally{await stop(server);cleanup(f);}
+ });
+}
+
 test('terminal activity aggregates detached panes and ignores backend and Codex process trees',async({page})=>{
  test.setTimeout(90000);
  const f=fixture();f.env.AIDE_FIXTURE_UI_CHILD='1';
+ // LaunchAgents may have no UTF-8 locale; tmux must preserve metadata tabs.
+ delete f.env.LANG;f.env.LC_ALL='C';
  const server=await manager(f);
  try{
   f.run(binary,['task','start','activity','--workspace-only']);
   await page.goto(server.url);
   await expect(taskRow(page,'activity').locator('.terminal-activity')).toHaveText('—');
   f.run(binary,['task','recover','activity']);
-  f.run(binary,['task','attach','activity','--new-window']);
   const r=runtimeTools(f,'activity'),work=r.pane('work'),backend=r.pane('backend');
   await expect.poll(()=>r.capture(work)).toContain('Fixture Codex conversation ready');
+  f.run(binary,['task','attach','activity','--new-window']);
   await page.goto(server.url);
   const row=taskRow(page,'activity'),activity=row.locator('.terminal-activity');
   await expect(row).toContainText('Fixture conversation');

@@ -225,6 +225,11 @@ impl Runtime {
             .await
             .context("Backend unavailable; inspect the backend window")?;
         self.observe(&project, &task, &mut rpc).await?;
+        if let Err(error) = crate::trust::WorkspaceTrust::inherit(&project, &task, &mut rpc).await {
+            eprintln!(
+                "Could not inherit workspace trust: {error:#}. Codex will check folder trust."
+            );
+        }
         if options.pick {
             drop(rpc);
             return crate::native_picker::NativePicker::new(

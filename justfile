@@ -126,6 +126,10 @@ aide-dev-server: build-aide-ui
 test-aide-protocol:
     cargo test --locked -p aide-server live_codex_observer -- --ignored --nocapture
 
+# Check workspace trust inheritance against isolated native Codex config; no model turns.
+test-aide-trust:
+    cargo test --locked -p aide-server trust::tests -- --include-ignored
+
 # Check conversation selection, persistence, and restart recovery with disposable fixtures.
 test-aide-conversations: build-aide-ui
     cargo test --locked -p aide-server -- --test-threads=1

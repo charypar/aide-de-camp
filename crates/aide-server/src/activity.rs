@@ -328,6 +328,47 @@ mod tests {
     }
 
     #[test]
+    fn pane_metadata_survives_service_locale() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let socket = directory.path().join("tmux.sock");
+        let run = |args: &[&str]| {
+            Terminal::command()
+                .env_remove("TMUX")
+                .env_remove("TMUX_PANE")
+                .env_remove("LANG")
+                .env("LC_ALL", "C")
+                .args(["-S", socket.to_str().unwrap(), "-f", "/dev/null"])
+                .args(args)
+                .output()
+        };
+        let started = run(&["new-session", "-d", "-s", "aide-locale", "/bin/sleep", "60"])?;
+        assert!(
+            started.status.success(),
+            "{}",
+            String::from_utf8_lossy(&started.stderr)
+        );
+        let output = run(&[
+            "list-panes",
+            "-a",
+            "-F",
+            "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_tty}\t#{@aide-backend}\t#{@aide-work}\t#{@aide-codex}",
+        ]);
+        let _ = run(&["kill-server"]);
+        let output = output?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let panes = Pane::parse_all(String::from_utf8(output.stdout)?.trim())?;
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].session, "aide-locale");
+        assert!(panes[0].pid > 0);
+        assert!(!panes[0].tty.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn backend_is_excluded_by_pane_not_window_and_other_panes_still_count() -> Result<()> {
         let panes = Pane::parse_all(
             "aide-test\t%1\t10\t0\t/dev/ttys001\t%1\t%2\t\naide-test\t%2\t20\t0\t/dev/ttys002\t%1\t%2\t\naide-test\t%3\t30\t0\t/dev/ttys003\t%1\t%2\t",

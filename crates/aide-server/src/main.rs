@@ -19,6 +19,7 @@ mod rpc;
 mod runtime;
 mod tailnet;
 mod terminal;
+mod trust;
 mod worker;
 mod workspace;
 

@@ -146,6 +146,17 @@ This opens Codex's native fork picker across all workspaces on that host, includ
 
 Project records live in `.aide/state.sqlite`; the personal project registry and retained native conversation recordings live under `~/.aide`. Use `--home` or `AIDE_HOME` to select another personal data directory. Codex retains its original sessions separately. A task stays associated with its saved conversation even if you start another conversation in the same directory; only explicit history selection through `aide codex resume` repins it.
 
+### Workspace trust
+
+Aide carries an existing Codex trust decision for the registered project folder or source repository into each task workspace before opening Codex, including the native fork picker. To trust a whole Aide project, add its canonical absolute path to the user-level Codex configuration (`~/.codex/config.toml`, or the configured Codex home):
+
+```toml
+[projects."/absolute/path/to/Project"]
+trust_level = "trusted"
+```
+
+Codex's remote startup path requires a workspace entry, so Aide saves that entry through Codex's configuration API. Existing workspace decisions and untrusted source/project/ancestor entries are preserved. A version check prevents overwriting concurrent configuration edits. If inheritance fails, Aide reports it and lets the native UI perform its usual trust check. Trust is host-local; inherited workspace entries persist in Codex configuration after task cleanup or later changes to project trust.
+
 ### Private working agreements
 
 The dashboard's **AI configuration** cog in the header browses these private files.

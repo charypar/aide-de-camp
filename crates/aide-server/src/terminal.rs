@@ -111,6 +111,9 @@ impl Terminal {
 
     pub fn command() -> Command {
         let mut command = Command::new("tmux");
+        // Service environments may have no UTF-8 locale. Without -u tmux
+        // replaces tabs in formatted metadata with underscores.
+        command.arg("-u");
         if let Some(socket) = std::env::var_os("AIDE_TMUX_SOCKET") {
             command.arg("-L").arg(socket);
         }
