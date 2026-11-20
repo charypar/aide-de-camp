@@ -71,7 +71,8 @@ test('remote machine selection survives snapshots and disconnected tasks disappe
   await expect(page.locator('[data-machine=fixture-remote]')).toHaveAttribute('title', /Disconnected/);
   await expect(page.locator('[data-machine=fixture-remote]')).not.toContainText('(0.1)');
   await expect(page.locator('.task')).toHaveCount(0);
-  await expect(page.getByText('Other host: Disconnected — overview incomplete')).toBeVisible();
+  await expect(page.locator('[data-machine=fixture-remote].offline .connection-dot')).toBeVisible();
+  await expect(page.locator('main').getByText('Other host: Disconnected', {exact:false})).toHaveCount(0);
   disconnected=false;
   await expect(page.locator('.task')).toHaveCount(1);
   await expect(page.locator('[data-machine=fixture-remote]')).toContainText('(0.1)');

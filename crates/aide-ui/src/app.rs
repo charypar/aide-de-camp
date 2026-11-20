@@ -55,7 +55,6 @@ fn Tasks(machine: RwSignal<String>) -> impl IntoView {
     let toggle_history = move |_| completed.update(|v| *v = !*v);
     view! {
         <nav aria-label="Project navigation"><button class="project-filter" aria-pressed=move || focus.get().is_empty().to_string() on:click=show_all>"All projects"</button><label class="history"><input type="checkbox" on:change=toggle_history prop:checked=move || completed.get()/>"Show completed"</label></nav>
-        {move || cx.hosts.get().into_iter().filter(|host| host.error.is_some()).map(|host| view! { <p class="error">{format!("{}: {} — overview incomplete", host.identity.name, host.error.unwrap_or_default())}</p> }).collect_view()}
         <Show when=move || cx.connected.get() && cx.projects.get().is_empty()><section class="empty"><h1>"Make room for your next task"</h1><p>"Register a project from your terminal:"</p><code>"aide init . --repo ./repository"</code></section></Show>
         <For each={move || cx.projects.get().into_iter().filter(|p| (focus.get().is_empty() || focus.get() == p.root) && (machine.get().is_empty() || p.source.as_ref().map(|source| source.instance.clone()).unwrap_or_else(|| "local".into()) == machine.get())).map(|p| p.root).collect::<Vec<_>>()} key=|root| root.clone() children={move |root| view! { <Project root=root focus=focus completed=completed/> }}/>
     }
